@@ -4,6 +4,7 @@ swoole_http_client_coro: http 204 no content
 <?php
 require __DIR__ . '/../include/skipif.inc';
 skip_if_in_travis('travis network');
+skip_if_offline();
 ?>
 --FILE--
 <?php
@@ -22,7 +23,7 @@ go(function () {
         'Accept-Encoding' => 'gzip'
     ]);
     Assert::assert($cli->post($path, []));
-    Assert::eq($cli->statusCode, 204);
+    Assert::same($cli->statusCode, 204);
     Assert::assert(empty($cli->body));
 });
 

@@ -9,7 +9,7 @@ $port = get_one_free_port();
 
 const N = 1024 * 1024 * 1;
 
-$pm = new ProcessManager;
+$pm = new SwooleTest\ProcessManager;
 
 $pm->parentFunc = function ($pid) use ($port)
 {
@@ -35,7 +35,7 @@ $pm->parentFunc = function ($pid) use ($port)
         usleep(10000);
         $bytes += strlen($r);
     }
-    Assert::eq($bytes, N);
+    Assert::same($bytes, N);
     swoole_process::kill($pid);
 };
 

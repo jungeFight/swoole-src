@@ -1,7 +1,9 @@
 --TEST--
 swoole_http_client_coro: upload a big file
 --SKIPIF--
-<?php require __DIR__ . '/../include/skipif.inc'; ?>
+<?php require __DIR__ . '/../include/skipif.inc';
+skip_if_offline();
+?>
 --FILE--
 <?php
 require __DIR__ . '/../include/bootstrap.php';
@@ -14,7 +16,7 @@ go(function () {
     $ret = $cli->post('/', ['name' => 'rango']);
     Assert::assert($ret);
     Assert::assert(count($cli->headers) > 0);
-    Assert::eq($cli->statusCode, 200);
+    Assert::same($cli->statusCode, 200);
     Assert::assert(strpos($cli->body, IS_IN_TRAVIS ? 'MIT News' : 'cust.edu.cn') !== false);
     $cli->close();
     @unlink('/tmp/test.jpg');

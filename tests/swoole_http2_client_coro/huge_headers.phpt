@@ -1,7 +1,10 @@
 --TEST--
 swoole_http2_client_coro: huge headers
 --SKIPIF--
-<?php require __DIR__ . '/../include/skipif.inc'; ?>
+<?php
+require __DIR__ . '/../include/skipif.inc';
+skip('internal changes');
+?>
 --FILE--
 <?php
 require __DIR__ . '/../include/bootstrap.php';
@@ -26,15 +29,15 @@ $pm->parentFunc = function ($pid) use ($pm) {
             }
             Assert::assert($cli->send($request));
             $response = $cli->recv();
-            Assert::eq($response->statusCode, 200);
-            Assert::eq(json_encode($request->headers), $response->data);
+            Assert::same($response->statusCode, 200);
+            Assert::same(json_encode($request->headers), $response->data);
             unset(
                 $response->headers['server'],
                 $response->headers['date'],
                 $response->headers['content-type'],
                 $response->headers['content-length']
             );
-            Assert::eq($request->headers, $response->headers);
+            Assert::same($request->headers, $response->headers);
         }
         for ($i = 32; $i--;) {
             $request->headers[md5(mt_rand(1, 65535))] = sha1(openssl_random_pseudo_bytes(32));

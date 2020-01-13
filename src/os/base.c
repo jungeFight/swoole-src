@@ -39,7 +39,7 @@ int swAio_init(void)
         swWarn("AIO has already been initialized");
         return SW_ERR;
     }
-    if (!SwooleG.main_reactor)
+    if (!SwooleTG.reactor)
     {
         swWarn("No eventloop, cannot initialized");
         return SW_ERR;
@@ -67,8 +67,8 @@ int swAio_init(void)
     _pipe_read = _aio_pipe.getFd(&_aio_pipe, 0);
     _pipe_write = _aio_pipe.getFd(&_aio_pipe, 1);
 
-    SwooleG.main_reactor->setHandle(SwooleG.main_reactor, SW_FD_AIO, swAio_onCompleted);
-    SwooleG.main_reactor->add(SwooleG.main_reactor, _pipe_read, SW_FD_AIO);
+    SwooleTG.reactor->setHandle(SwooleTG.reactor, SW_FD_AIO, swAio_onCompleted);
+    swoole_event_add(_pipe_read, SW_FD_AIO);
 
     if (swThreadPool_run(&pool) < 0)
     {
@@ -177,15 +177,16 @@ void swAio_free(void)
         return;
     }
     swThreadPool_free(&pool);
-    if (SwooleG.main_reactor)
+    if (SwooleTG.reactor)
     {
-        SwooleG.main_reactor->del(SwooleG.main_reactor, _pipe_read);
+        SwooleTG.reactor->del(SwooleTG.reactor, _pipe_read);
     }
     _aio_pipe.close(&_aio_pipe);
     SwooleAIO.init = 0;
 }
 #endif
 
+#if __APPLE__
 int swoole_daemon(int nochdir, int noclose)
 {
     pid_t pid;
@@ -215,7 +216,7 @@ int swoole_daemon(int nochdir, int noclose)
         close(fd);
     }
 
-    pid = fork();
+    pid = swoole_fork(SW_FORK_DAEMON);
     if (pid < 0)
     {
         swSysWarn("fork() failed");
@@ -232,6 +233,15 @@ int swoole_daemon(int nochdir, int noclose)
     }
     return 0;
 }
+#else
+int swoole_daemon(int nochdir, int noclose)
+{
+    if (swoole_fork(SW_FORK_PRECHECK) < 0) {
+        return -1;
+    }
+    return daemon(nochdir, noclose);
+}
+#endif
 
 void swAio_handler_read(swAio_event *event)
 {
@@ -246,11 +256,76 @@ void swAio_handler_read(swAio_event *event)
     while (1)
     {
         ret = pread(event->fd, event->buf, event->nbytes, event->offset);
-        if (ret < 0 && (errno == EINTR || errno == EAGAIN))
+        if (ret < 0 && errno == EINTR)
         {
             continue;
         }
         break;
+    }
+    if (event->lock && flock(event->fd, LOCK_UN) < 0)
+    {
+        swSysWarn("flock(%d, LOCK_UN) failed", event->fd);
+    }
+    if (ret < 0)
+    {
+        event->error = errno;
+    }
+    event->ret = ret;
+}
+
+void swAio_handler_fread(swAio_event *event)
+{
+    int ret = -1;
+    if (event->lock && flock(event->fd, LOCK_SH) < 0)
+    {
+        swSysWarn("flock(%d, LOCK_SH) failed", event->fd);
+        event->ret = -1;
+        event->error = errno;
+        return;
+    }
+    while (1)
+    {
+        ret = read(event->fd, event->buf, event->nbytes);
+        if (ret < 0 && errno == EINTR)
+        {
+            continue;
+        }
+        break;
+    }
+    if (event->lock && flock(event->fd, LOCK_UN) < 0)
+    {
+        swSysWarn("flock(%d, LOCK_UN) failed", event->fd);
+    }
+    if (ret < 0)
+    {
+        event->error = errno;
+    }
+    event->ret = ret;
+}
+
+void swAio_handler_fwrite(swAio_event *event)
+{
+    int ret = -1;
+    if (event->lock && flock(event->fd, LOCK_EX) < 0)
+    {
+        swSysWarn("flock(%d, LOCK_EX) failed", event->fd);
+        return;
+    }
+    while (1)
+    {
+        ret = write(event->fd, event->buf, event->nbytes);
+        if (ret < 0 && errno == EINTR)
+        {
+            continue;
+        }
+        break;
+    }
+    if (event->flags & SW_AIO_WRITE_FSYNC)
+    {
+        if (fsync(event->fd) < 0)
+        {
+            swSysWarn("fsync(%d) failed", event->fd);
+        }
     }
     if (event->lock && flock(event->fd, LOCK_UN) < 0)
     {
@@ -402,13 +477,14 @@ void swAio_handler_write(swAio_event *event)
         swSysWarn("flock(%d, LOCK_EX) failed", event->fd);
         return;
     }
-    if (event->offset == 0)
-    {
-        ret = write(event->fd, event->buf, event->nbytes);
-    }
-    else
+    while (1)
     {
         ret = pwrite(event->fd, event->buf, event->nbytes, event->offset);
+        if (ret < 0 && errno == EINTR)
+        {
+            continue;
+        }
+        break;
     }
     if (event->flags & SW_AIO_WRITE_FSYNC)
     {
@@ -435,7 +511,7 @@ void swAio_handler_gethostbyname(swAio_event *event)
     int ret;
 
 #ifndef HAVE_GETHOSTBYNAME2_R
-    SwooleAIO.lock.lock(&SwooleAIO.lock);
+    SwooleG.lock.lock(&SwooleG.lock);
 #endif
     if (event->flags == AF_INET6)
     {
@@ -447,12 +523,12 @@ void swAio_handler_gethostbyname(swAio_event *event)
     }
     bzero(event->buf, event->nbytes);
 #ifndef HAVE_GETHOSTBYNAME2_R
-    SwooleAIO.lock.unlock(&SwooleAIO.lock);
+    SwooleG.lock.unlock(&SwooleG.lock);
 #endif
 
     if (ret < 0)
     {
-        event->error = h_errno;
+        event->error = SW_ERROR_DNSLOOKUP_RESOLVE_FAILED;
     }
     else
     {

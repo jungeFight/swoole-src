@@ -1,7 +1,10 @@
 --TEST--
-swoole_library/std/exec: Test exec
+swoole_library/exec/shell_exec: shell_exec
 --SKIPIF--
-<?php require __DIR__ . '/../../../include/skipif.inc'; ?>
+<?php
+require __DIR__ . '/../../../include/skipif.inc';
+skip_if_command_not_found('md5sum');
+?>
 --FILE--
 <?php
 require __DIR__ . '/../../../include/bootstrap.php';
@@ -9,7 +12,7 @@ require __DIR__ . '/../../../include/bootstrap.php';
 Swoole\Runtime::enableCoroutine();
 go(function () {
     $output = shell_exec('md5sum ' . TEST_IMAGE);
-    Assert::eq(strstr($output, ' ', true), md5_file(TEST_IMAGE));
+    Assert::same(strstr($output, ' ', true), md5_file(TEST_IMAGE));
 });
 
 ?>

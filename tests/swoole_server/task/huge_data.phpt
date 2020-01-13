@@ -8,7 +8,7 @@ skip_if_in_valgrind();
 --FILE--
 <?php
 require __DIR__ . '/../../include/bootstrap.php';
-$pm = new ProcessManager;
+$pm = new SwooleTest\ProcessManager;
 $pm->setRandomFunc('get_big_random');
 $pm->initRandomData(MAX_REQUESTS_LOW);
 $pm->parentFunc = function (int $pid) use ($pm) {
@@ -17,7 +17,7 @@ $pm->parentFunc = function (int $pid) use ($pm) {
         for ($c = MAX_REQUESTS_LOW; $c--;) {
             $data = $pm->getRandomData();
             $body = httpGetBody($uri, ['data' => $data]);
-            Assert::eq($body, $data);
+            Assert::same($body, $data);
         }
     });
     Swoole\Event::wait();

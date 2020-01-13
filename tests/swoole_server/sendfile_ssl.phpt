@@ -6,7 +6,7 @@ swoole_server: sendfile with SSL
 <?php
 require __DIR__ . '/../include/bootstrap.php';
 
-$pm = new ProcessManager;
+$pm = new SwooleTest\ProcessManager;
 
 $pm->parentFunc = function ($pid) use ($pm) {
     $client = new swoole_client(SWOOLE_SOCK_TCP | SWOOLE_SSL, SWOOLE_SOCK_SYNC); //同步阻塞
@@ -34,8 +34,8 @@ $pm->parentFunc = function ($pid) use ($pm) {
         $bytes += strlen($r);
         $data .= $r;
     }
-    Assert::eq($bytes, $N);
-    Assert::eq(md5_file(TEST_IMAGE), md5($data));
+    Assert::same($bytes, $N);
+    Assert::same(md5_file(TEST_IMAGE), md5($data));
     $pm->kill();
 };
 

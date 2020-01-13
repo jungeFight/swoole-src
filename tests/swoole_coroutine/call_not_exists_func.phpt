@@ -8,7 +8,9 @@ require __DIR__ . '/../include/bootstrap.php';
 $pm = new ProcessManager;
 $pm->parentFunc = function (int $pid) use ($pm) {
     go(function () use ($pm) {
-        echo httpGetBody("http://127.0.0.1:{$pm->getFreePort()}/");
+        Assert::throws(function () use ($pm) {
+            httpGetBody("http://127.0.0.1:{$pm->getFreePort()}/");
+        }, Exception::class);
         $pm->kill();
     });
 };
@@ -33,7 +35,7 @@ Fatal error: Uncaught Error: Call to undefined function none() in %s:%d
 Stack trace:
 #0 {main}
   thrown in %s on line %d
-[%s]	ERROR	swoole_server_rshutdown (ERRNO %d): Fatal error: Uncaught Error: Call to undefined function none() in %s:%d
+[%s]	ERROR	php_swoole_server_rshutdown (ERRNO %d): Fatal error: Uncaught Error: Call to undefined function none() in %s:%d
 Stack trace:
 #0 {main}
   thrown in %s on line %d

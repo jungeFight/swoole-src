@@ -59,8 +59,13 @@ extern int php_get_gid_by_name(const char *name, gid_t *gid);
 # define PLAIN_WRAP_BUF_SIZE(st) (st)
 #endif
 
+#if PHP_VERSION_ID < 70400
 static size_t php_stdiop_write(php_stream *stream, const char *buf, size_t count);
 static size_t php_stdiop_read(php_stream *stream, char *buf, size_t count);
+#else
+static ssize_t php_stdiop_write(php_stream *stream, const char *buf, size_t count);
+static ssize_t php_stdiop_read(php_stream *stream, char *buf, size_t count);
+#endif
 static int sw_php_stdiop_close(php_stream *stream, int close_handle);
 static int php_stdiop_stat(php_stream *stream, php_stream_statbuf *ssb);
 static int php_stdiop_flush(php_stream *stream);
@@ -216,7 +221,11 @@ static php_stream *_sw_php_stream_fopen_from_fd_int(int fd, const char *mode, co
     return php_stream_alloc_rel(&sw_php_stream_stdio_ops, self, persistent_id, mode);
 }
 
+#if PHP_VERSION_ID < 70400
 static size_t php_stdiop_write(php_stream *stream, const char *buf, size_t count)
+#else
+static ssize_t php_stdiop_write(php_stream *stream, const char *buf, size_t count)
+#endif
 {
     php_stdio_stream_data *data = (php_stdio_stream_data*) stream->abstract;
 
@@ -225,11 +234,15 @@ static size_t php_stdiop_write(php_stream *stream, const char *buf, size_t count
     if (data->fd >= 0)
     {
         int bytes_written = write(data->fd, buf, count);
+#if PHP_VERSION_ID < 70400
         if (bytes_written < 0)
         {
             return 0;
         }
         return (size_t) bytes_written;
+#else
+        return bytes_written;
+#endif
     }
     else
     {
@@ -237,7 +250,11 @@ static size_t php_stdiop_write(php_stream *stream, const char *buf, size_t count
     }
 }
 
+#if PHP_VERSION_ID < 70400
 static size_t php_stdiop_read(php_stream *stream, char *buf, size_t count)
+#else
+static ssize_t php_stdiop_read(php_stream *stream, char *buf, size_t count)
+#endif
 {
     php_stdio_stream_data *data = (php_stdio_stream_data*) stream->abstract;
     size_t ret;
@@ -737,7 +754,11 @@ static int php_stdiop_set_option(php_stream *stream, int option, int value, void
 /* }}} */
 
 /* {{{ plain files opendir/readdir implementation */
+#if PHP_VERSION_ID < 70400
 static size_t php_plain_files_dirstream_read(php_stream *stream, char *buf, size_t count)
+#else
+static ssize_t php_plain_files_dirstream_read(php_stream *stream, char *buf, size_t count)
+#endif
 {
     DIR *dir = (DIR*) stream->abstract;
     struct dirent *result;
@@ -816,7 +837,7 @@ static php_stream *php_plain_files_dir_opener(php_stream_wrapper *wrapper, const
 
 static php_stream *stream_fopen_rel(const char *filename, const char *mode, zend_string **opened_path, int options STREAMS_DC)
 {
-    char realpath[MAXPATHLEN];
+    char _realpath[MAXPATHLEN];
     int open_flags;
     int fd;
     php_stream *ret;
@@ -834,11 +855,11 @@ static php_stream *stream_fopen_rel(const char *filename, const char *mode, zend
 
     if (options & STREAM_ASSUME_REALPATH)
     {
-        strlcpy(realpath, filename, sizeof(realpath));
+        strlcpy(_realpath, filename, sizeof(_realpath));
     }
     else
     {
-        if (expand_filepath(filename, realpath) == NULL)
+        if (expand_filepath(filename, _realpath) == NULL)
         {
             return NULL;
         }
@@ -846,14 +867,14 @@ static php_stream *stream_fopen_rel(const char *filename, const char *mode, zend
 
     if (persistent)
     {
-        spprintf(&persistent_id, 0, "streams_stdio_%d_%s", open_flags, realpath);
+        spprintf(&persistent_id, 0, "streams_stdio_%d_%s", open_flags, _realpath);
         switch (php_stream_from_persistent_id(persistent_id, &ret))
         {
         case PHP_STREAM_PERSISTENT_SUCCESS:
             if (opened_path)
             {
                 //TODO: avoid reallocation???
-                *opened_path = zend_string_init(realpath, strlen(realpath), 0);
+                *opened_path = zend_string_init(_realpath, strlen(_realpath), 0);
             }
             /* fall through */
 
@@ -863,9 +884,9 @@ static php_stream *stream_fopen_rel(const char *filename, const char *mode, zend
         }
     }
 #ifdef PHP_WIN32
-	fd = php_win32_ioutil_open(realpath, open_flags, 0666);
+	fd = php_win32_ioutil_open(_realpath, open_flags, 0666);
 #else
-	fd = open(realpath, open_flags, 0666);
+	fd = open(_realpath, open_flags, 0666);
 #endif
     if (fd != -1)
     {
@@ -874,7 +895,7 @@ static php_stream *stream_fopen_rel(const char *filename, const char *mode, zend
         {
             if (opened_path)
             {
-                *opened_path = zend_string_init(realpath, strlen(realpath), 0);
+                *opened_path = zend_string_init(_realpath, strlen(_realpath), 0);
             }
             if (persistent_id)
             {
@@ -924,17 +945,35 @@ static php_stream *stream_opener(php_stream_wrapper *wrapper, const char *path, 
     {
         return NULL;
     }
-    /**
-     * include file, cannot use async-io
-     */
+
+    /** phar_open_archive_fp, cannot use async-io */
+    if (
+        EG(current_execute_data) &&
+        EG(current_execute_data)->func &&
+        ZEND_USER_CODE(EG(current_execute_data)->func->type)
+    )
+    {
+        const zend_op* opline = EG(current_execute_data)->opline;
+        if (
+            opline && opline->opcode == ZEND_INCLUDE_OR_EVAL &&
+            (opline->extended_value & (ZEND_INCLUDE | ZEND_INCLUDE_ONCE | ZEND_REQUIRE | ZEND_REQUIRE_ONCE))
+        )
+        {
+            size_t path_len = strlen(path);
+            size_t phar_len = sizeof(".phar") - 1;
+            if (path_len > phar_len && memcmp(path + path_len - phar_len, ".phar", phar_len) == 0)
+            {
+                return php_stream_fopen_rel(path, mode, opened_path, options);
+            }
+        }
+    }
+    /** include file, cannot use async-io */
     if (options & STREAM_OPEN_FOR_INCLUDE)
     {
         return php_stream_fopen_rel(path, mode, opened_path, options);
     }
-    else
-    {
-        return stream_fopen_rel(path, mode, opened_path, options STREAMS_REL_CC);
-    }
+
+    return stream_fopen_rel(path, mode, opened_path, options STREAMS_REL_CC);
 }
 
 static int php_plain_files_url_stater(php_stream_wrapper *wrapper, const char *url, int flags, php_stream_statbuf *ssb, php_stream_context *context)

@@ -5,12 +5,12 @@ swoole_server/task: task & finish
 --FILE--
 <?php
 require __DIR__ . '/../../include/bootstrap.php';
-$pm = new ProcessManager;
+$pm = new SwooleTest\ProcessManager;
 $pm->parentFunc = function (int $pid) use ($pm) {
     for ($i = MAX_CONCURRENCY_LOW; $i--;) {
         go(function () use ($pm) {
             $ret = httpGetBody("http://127.0.0.1:{$pm->getFreePort()}");
-            Assert::eq($ret, 'Hello Swoole!');
+            Assert::same($ret, 'Hello Swoole!');
         });
     }
     swoole_event_wait();

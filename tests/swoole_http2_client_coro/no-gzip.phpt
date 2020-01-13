@@ -4,6 +4,7 @@ swoole_http2_client_coro: http2 without gzip and recv big data (window-update)
 <?php
 require __DIR__ . '/../include/skipif.inc';
 skip_if_in_travis('travis network');
+skip_if_offline();
 ?>
 --FILE--
 <?php
@@ -34,7 +35,7 @@ go(function () {
     while ($i--) {
         /**@var $response swoole_http2_response */
         $response = $cli->recv();
-        Assert::eq($response->statusCode, 200);
+        Assert::same($response->statusCode, 200);
         Assert::assert(strpos($response->data, 'zhihu') !== false);
         $map[] = $response->streamId;
     }

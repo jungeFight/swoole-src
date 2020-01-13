@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include "swoole.h"
+#include "swoole_api.h"
 #include "context.h"
 #include "async.h"
 
@@ -56,12 +56,14 @@ struct socket_poll_fd
     int16_t events;
     int16_t revents;
     void *ptr;
+    swSocket *socket;
 
     socket_poll_fd(int16_t _event, void *_ptr)
     {
         events = _event;
         ptr = _ptr;
         revents = 0;
+        socket = nullptr;
     }
 };
 
@@ -185,10 +187,10 @@ public:
     static void print_list();
 
 protected:
-    static size_t stack_size;
     static Coroutine* current;
     static long last_cid;
     static uint64_t peak_num;
+    static size_t stack_size;
     static sw_coro_on_swap_t on_yield;   /* before yield */
     static sw_coro_on_swap_t on_resume;  /* before resume */
     static sw_coro_on_swap_t on_close;   /* before close */
@@ -238,6 +240,12 @@ protected:
 
     void close();
 };
+//-------------------------------------------------------------------------------
+namespace coroutine
+{
+bool async(swAio_handler handler, swAio_event &event, double timeout = -1);
+}
+//-------------------------------------------------------------------------------
 }
 
 /**

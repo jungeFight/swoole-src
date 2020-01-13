@@ -38,7 +38,7 @@ object(Swoole\Http\Request)#%d (%d) {
     ["connection"]=>
     string(10) "keep-alive"
     ["accept-encoding"]=>
-    string(4) "gzip"
+    string(%d) "%s"
   }
   ["server"]=>
   array(10) {
@@ -63,8 +63,6 @@ object(Swoole\Http\Request)#%d (%d) {
     ["master_time"]=>
     int(%d)
   }
-  ["request"]=>
-  NULL
   ["cookie"]=>
   NULL
   ["get"]=>

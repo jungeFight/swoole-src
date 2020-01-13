@@ -21,9 +21,7 @@
 
 #include "swoole.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+SW_EXTERN_C_BEGIN
 
 #define SW_MQTT_MIN_LENGTH                   2
 #define SW_MQTT_MAX_PAYLOAD_SIZE             268435455
@@ -63,10 +61,8 @@ typedef struct
 #define SETQOS(HDR, Q)      (HDR | ((Q) << 1))
 #define SETDUP(HDR, D)      (HDR | ((D) << 3))
 
-ssize_t swMqtt_get_package_length(swProtocol *protocol, swConnection *conn, char *data, uint32_t size);
+ssize_t swMqtt_get_package_length(swProtocol *protocol, swSocket *conn, char *data, uint32_t size);
 
-#ifdef __cplusplus
-}
-#endif
+SW_EXTERN_C_END
 
 #endif /* SW_MQTT_H_ */

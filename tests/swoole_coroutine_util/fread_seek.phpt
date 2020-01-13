@@ -14,11 +14,13 @@ co::create(function () {
         fseek($fp, 1024);
         $php_data = fread($fp, fstat($fp)['size']);
         $co_data = co::fread($fp);
-        Assert::eq($php_data, $co_data);
+        Assert::same($php_data, $co_data);
     } else {
         echo "ERROR\n";
     }
 });
+
+swoole_event_wait();
 
 ?>
 --EXPECT--

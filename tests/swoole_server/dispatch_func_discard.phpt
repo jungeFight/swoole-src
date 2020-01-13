@@ -5,7 +5,7 @@ swoole_server: dispatch_func [discard]
 --FILE--
 <?php
 require __DIR__ . '/../include/bootstrap.php';
-$pm = new ProcessManager;
+$pm = new SwooleTest\ProcessManager;
 $pm->parentFunc = function () use ($pm) {
 
     go(function () use ($pm) {
@@ -14,7 +14,7 @@ $pm->parentFunc = function () use ($pm) {
 
         $data = str_repeat('A', 65534)."\r\n\r\n";
         Assert::assert($client->send($data));
-        Assert::eq(false, @$client->recv());
+        Assert::same(false, @$client->recv());
     });
     
     Swoole\Event::wait();

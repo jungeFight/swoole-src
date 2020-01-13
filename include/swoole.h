@@ -98,24 +98,20 @@ int clock_gettime(clock_id_t which_clock, struct timespec *t);
 #endif
 #endif
 
-#if __APPLE__
-#define  daemon(nochdir, noclose)    swoole_daemon(nochdir, noclose)
-#endif
-
 /*----------------------------------------------------------------------------*/
 
 #define SWOOLE_MAJOR_VERSION      4
-#define SWOOLE_MINOR_VERSION      4
+#define SWOOLE_MINOR_VERSION      5
 #define SWOOLE_RELEASE_VERSION    0
-#define SWOOLE_EXTRA_VERSION      "beta"
-#define SWOOLE_VERSION            "4.4.0-beta"
-#define SWOOLE_VERSION_ID         40400
+#define SWOOLE_EXTRA_VERSION      "alpha"
+#define SWOOLE_VERSION            "4.5.0-alpha"
+#define SWOOLE_VERSION_ID         40500
 #define SWOOLE_BUG_REPORT \
     "A bug occurred in Swoole-v" SWOOLE_VERSION ", please report it.\n"\
     "The Swoole developers probably don't know about it,\n"\
     "and unless you report it, chances are it won't be fixed.\n"\
     "You can read How to report a bug doc before submitting any bug reports:\n"\
-    ">> https://github.com/swoole/swoole-src/issues/2000\n"\
+    ">> https://github.com/swoole/swoole-src/blob/master/.github/ISSUE.md \n"\
     "Please do not send bug reports in the mailing list or personal letters.\n"\
     "The issue page is also suitable to submit feature requests.\n"
 
@@ -154,6 +150,10 @@ typedef unsigned long ulong_t;
 
 #if defined(MAP_ANON) && !defined(MAP_ANONYMOUS)
 #define MAP_ANONYMOUS MAP_ANON
+#endif
+
+#if defined(MAP_HUGETLB) || defined(MAP_ALIGNED_SUPER)
+#define MAP_HUGE_PAGE 1
 #endif
 
 #ifndef SOCK_NONBLOCK
@@ -260,6 +260,11 @@ typedef unsigned long ulong_t;
 #endif
 #endif
 
+static sw_inline int sw_mem_equal(const void *v1, size_t s1, const void *v2, size_t s2)
+{
+    return s1 == s2 && memcmp(v1, v2, s2) == 0;
+}
+
 /*----------------------------------String-------------------------------------*/
 
 #define SW_STRS(s)             s, sizeof(s)
@@ -272,6 +277,8 @@ typedef unsigned long ulong_t;
 #define sw_strdup              strdup
 #define sw_strndup             strndup
 #endif
+
+#define SW_Z_BEST_SPEED 1
 
 /** always return less than size, zero termination  */
 size_t sw_snprintf(char *buf, size_t size, const char *format, ...);
@@ -298,6 +305,34 @@ static sw_inline char* swoole_strndup(const char *s, size_t n)
     return p;
 }
 
+/* string equal */
+static sw_inline unsigned int swoole_streq(const char *str1, size_t len1, const char *str2, size_t len2)
+{
+    return (len1 == len2) && (strncmp(str1, str2, len1) == 0);
+}
+
+static sw_inline unsigned int swoole_strcaseeq(const char *str1, size_t len1, const char *str2, size_t len2)
+{
+    return (len1 == len2) && (strncasecmp(str1, str2, len1) == 0);
+}
+
+static sw_inline unsigned int swoole_strct(const char *pstr, size_t plen, const char *sstr, size_t slen)
+{
+    return (plen >= slen) && (strncmp(pstr, sstr, slen) == 0);
+}
+
+static sw_inline unsigned int swoole_strcasect(const char *pstr, size_t plen, const char *sstr, size_t slen)
+{
+    return (plen >= slen) && (strncasecmp(pstr, sstr, slen) == 0);
+}
+
+#define SW_STREQ(str, len, const_str)      swoole_streq(str, len, SW_STRL(const_str))
+#define SW_STRCASEEQ(str, len, const_str)  swoole_strcaseeq(str, len, SW_STRL(const_str))
+
+/* string contain */
+#define SW_STRCT(str, len, const_sub_str)      swoole_strct(str, len, SW_STRL(const_sub_str))
+#define SW_STRCASECT(str, len, const_sub_str)  swoole_strcasect(str, len, SW_STRL(const_sub_str))
+
 /*--------------------------------Constants------------------------------------*/
 enum swResult_code
 {
@@ -316,15 +351,12 @@ enum swReturn_code
 
 enum swFd_type
 {
-    SW_FD_TCP, //tcp socket
-    SW_FD_LISTEN, //server socket
-    SW_FD_CLOSE, //socket closed
-    SW_FD_ERROR, //socket error
-    SW_FD_UDP, //udp socket
-    SW_FD_PIPE, //pipe
-    SW_FD_STREAM, //stream socket
-    SW_FD_WRITE, //fd can write
-    SW_FD_AIO, //aio
+    SW_FD_SESSION,       //server stream session
+    SW_FD_STREAM_SERVER, //server stream port
+    SW_FD_DGRAM_SERVER,  //server dgram port
+    SW_FD_PIPE,
+    SW_FD_STREAM,
+    SW_FD_AIO,
     /**
      * Coroutine Socket
      */
@@ -342,7 +374,7 @@ enum swFd_type
     /**
      * SW_FD_USER or SW_FD_USER+n: for custom event
      */
-    SW_FD_USER,
+    SW_FD_USER = 16,
     SW_FD_STREAM_CLIENT,
     SW_FD_DGRAM_CLIENT,
 };
@@ -364,12 +396,6 @@ enum swEvent_type
     SW_EVENT_ONCE   = 1u << 12,
 };
 
-enum swPipe_type
-{
-    SW_PIPE_READ  = 0,
-    SW_PIPE_WRITE = 1,
-};
-
 enum swGlobal_hook_type
 {
     SW_GLOBAL_HOOK_BEFORE_SERVER_START,
@@ -377,19 +403,22 @@ enum swGlobal_hook_type
     SW_GLOBAL_HOOK_BEFORE_WORKER_START,
     SW_GLOBAL_HOOK_ON_CORO_START,
     SW_GLOBAL_HOOK_ON_CORO_STOP,
+    SW_GLOBAL_HOOK_ON_REACTOR_CREATE,
 };
 
 enum swFork_type
 {
-    SW_FORK_SPAWN   = 0,
-    SW_FORK_EXEC    = 1u << 2,
+    SW_FORK_SPAWN    = 0,
+    SW_FORK_EXEC     = 1 << 1,
+    SW_FORK_DAEMON   = 1 << 2,
+    SW_FORK_PRECHECK = 1 << 3,
 };
 
 //-------------------------------------------------------------------------------
 enum swServer_mode
 {
-    SW_MODE_BASE          =  1,
-    SW_MODE_PROCESS       =  2,
+    SW_MODE_BASE         =  1,
+    SW_MODE_PROCESS      =  2,
 };
 //-------------------------------------------------------------------------------
 enum swSocket_type
@@ -398,10 +427,10 @@ enum swSocket_type
     SW_SOCK_UDP          =  2,
     SW_SOCK_TCP6         =  3,
     SW_SOCK_UDP6         =  4,
-    SW_SOCK_UNIX_DGRAM   =  5,  //unix sock dgram
-    SW_SOCK_UNIX_STREAM  =  6,  //unix sock stream
+    SW_SOCK_UNIX_STREAM  =  5,  //unix sock stream
+    SW_SOCK_UNIX_DGRAM   =  6,  //unix sock dgram
 };
-#define SW_SOCK_SSL            (1u << 9)
+#define SW_SOCK_SSL         (1u << 9)
 //-------------------------------------------------------------------------------
 enum swLog_level
 {
@@ -414,90 +443,85 @@ enum swLog_level
     SW_LOG_NONE,
 };
 //-------------------------------------------------------------------------------
-enum swFactory_dispatch_mode
-{
-    SW_DISPATCH_ROUND    = 1,
-    SW_DISPATCH_FDMOD    = 2,
-    SW_DISPATCH_QUEUE    = 3,
-    SW_DISPATCH_IPMOD    = 4,
-    SW_DISPATCH_UIDMOD   = 5,
-    SW_DISPATCH_USERFUNC = 6,
-    SW_DISPATCH_STREAM   = 7,
-};
-
-enum swFactory_dispatch_result
-{
-    SW_DISPATCH_RESULT_DISCARD_PACKET    = -1,
-    SW_DISPATCH_RESULT_CLOSE_CONNECTION  = -2,
-    SW_DISPATCH_RESULT_USERFUNC_FALLBACK = -3,
-};
-
 enum swWorker_status
 {
     SW_WORKER_BUSY = 1,
     SW_WORKER_IDLE = 2,
-    SW_WORKER_DEL  = 3,
 };
 //-------------------------------------------------------------------------------
 
-#define swNotice(str,...) \
-    if (SW_LOG_NOTICE >= SwooleG.log_level) {\
-        size_t _sw_errror_len = sw_snprintf(sw_error,SW_ERROR_MSG_SIZE,str,##__VA_ARGS__);\
-        SwooleG.write_log(SW_LOG_NOTICE, sw_error, _sw_errror_len);\
+#define swInfo(str,...) \
+    if (SW_LOG_INFO >= SwooleG.log_level) { \
+        size_t _sw_error_len = sw_snprintf(sw_error,SW_ERROR_MSG_SIZE,str,##__VA_ARGS__); \
+        SwooleG.write_log(SW_LOG_INFO, sw_error, _sw_error_len); \
     }
 
-#define swInfo(str,...) \
-    if (SW_LOG_INFO >= SwooleG.log_level) {\
-        size_t _sw_errror_len = sw_snprintf(sw_error,SW_ERROR_MSG_SIZE,str,##__VA_ARGS__);\
-        SwooleG.write_log(SW_LOG_INFO, sw_error, _sw_errror_len);\
+#define swNotice(str,...) \
+    if (SW_LOG_NOTICE >= SwooleG.log_level) { \
+        size_t _sw_error_len = sw_snprintf(sw_error,SW_ERROR_MSG_SIZE,str,##__VA_ARGS__); \
+        SwooleG.write_log(SW_LOG_NOTICE, sw_error, _sw_error_len); \
     }
+
+#define swSysNotice(str,...) \
+    do{ \
+        SwooleG.error = errno; \
+        if (SW_LOG_ERROR >= SwooleG.log_level) { \
+            size_t _sw_error_len = sw_snprintf(sw_error,SW_ERROR_MSG_SIZE,"%s(:%d): " str ", Error: %s[%d]",__func__,__LINE__,##__VA_ARGS__,strerror(errno),errno); \
+            SwooleG.write_log(SW_LOG_NOTICE, sw_error, _sw_error_len); \
+        } \
+    } while(0)
 
 #define swWarn(str,...) \
-    if (SW_LOG_WARNING >= SwooleG.log_level) {\
-        size_t _sw_errror_len = sw_snprintf(sw_error,SW_ERROR_MSG_SIZE,"%s: " str,__func__,##__VA_ARGS__);\
-        SwooleG.write_log(SW_LOG_WARNING, sw_error, _sw_errror_len);\
-    }
+    do{ \
+        if (SW_LOG_WARNING >= SwooleG.log_level) { \
+            size_t _sw_error_len = sw_snprintf(sw_error,SW_ERROR_MSG_SIZE,"%s: " str,__func__,##__VA_ARGS__); \
+            SwooleG.write_log(SW_LOG_WARNING, sw_error, _sw_error_len); \
+        } \
+    } while(0)
 
 #define swSysWarn(str,...) \
-    do{\
-        SwooleG.error = errno;\
-        if (SW_LOG_ERROR >= SwooleG.log_level) {\
-            size_t _sw_errror_len = sw_snprintf(sw_error,SW_ERROR_MSG_SIZE,"%s(:%d): " str ", Error: %s[%d]",__func__,__LINE__,##__VA_ARGS__,strerror(errno),errno);\
-            SwooleG.write_log(SW_LOG_WARNING, sw_error, _sw_errror_len);\
-        }\
+    do{ \
+        SwooleG.error = errno; \
+        if (SW_LOG_ERROR >= SwooleG.log_level) { \
+            size_t _sw_error_len = sw_snprintf(sw_error,SW_ERROR_MSG_SIZE,"%s(:%d): " str ", Error: %s[%d]",__func__,__LINE__,##__VA_ARGS__,strerror(errno),errno); \
+            SwooleG.write_log(SW_LOG_WARNING, sw_error, _sw_error_len); \
+        } \
     } while(0)
 
 #define swError(str,...) \
-    do{\
-        size_t _sw_errror_len = sw_snprintf(sw_error, SW_ERROR_MSG_SIZE, str, ##__VA_ARGS__);\
-        SwooleG.write_log(SW_LOG_ERROR, sw_error, _sw_errror_len);\
-        exit(1);\
+    do{ \
+        size_t _sw_error_len = sw_snprintf(sw_error, SW_ERROR_MSG_SIZE, str, ##__VA_ARGS__); \
+        SwooleG.write_log(SW_LOG_ERROR, sw_error, _sw_error_len); \
+        exit(1); \
     } while(0)
 
 #define swSysError(str,...) \
-    do{\
-        size_t _sw_errror_len = sw_snprintf(sw_error,SW_ERROR_MSG_SIZE,"%s(:%d): " str ", Error: %s[%d]",__func__,__LINE__,##__VA_ARGS__,strerror(errno),errno);\
-        SwooleG.write_log(SW_LOG_ERROR, sw_error, _sw_errror_len);\
-        exit(1);\
+    do{ \
+        size_t _sw_error_len = sw_snprintf(sw_error,SW_ERROR_MSG_SIZE,"%s(:%d): " str ", Error: %s[%d]",__func__,__LINE__,##__VA_ARGS__,strerror(errno),errno); \
+        SwooleG.write_log(SW_LOG_ERROR, sw_error, _sw_error_len); \
+        exit(1); \
     } while(0)
 
 #define swFatalError(code, str,...) \
-        SwooleG.fatal_error(code, str, ##__VA_ARGS__)
+    do { \
+        SwooleG.fatal_error(code, str, ##__VA_ARGS__); \
+        abort(); \
+    } while (0)
 
 #define swoole_error_log(level, __errno, str, ...) \
-    do{\
-        SwooleG.error = __errno;\
-        if (level >= SwooleG.log_level){\
-            size_t _sw_errror_len = sw_snprintf(sw_error, SW_ERROR_MSG_SIZE, "%s (ERRNO %d): " str,__func__,__errno,##__VA_ARGS__);\
-            SwooleG.write_log(level, sw_error, _sw_errror_len);\
-        }\
+    do{ \
+        SwooleG.error = __errno; \
+        if (level >= SwooleG.log_level){ \
+            size_t _sw_error_len = sw_snprintf(sw_error, SW_ERROR_MSG_SIZE, "%s (ERRNO %d): " str,__func__,__errno,##__VA_ARGS__); \
+            SwooleG.write_log(level, sw_error, _sw_error_len); \
+        } \
     } while(0)
 
 #ifdef SW_DEBUG
 #define swDebug(str,...) \
-    if (SW_LOG_DEBUG >= SwooleG.log_level) {\
-        size_t _sw_errror_len = sw_snprintf(sw_error, SW_ERROR_MSG_SIZE, "%s(:%d): " str, __func__, __LINE__, ##__VA_ARGS__);\
-        SwooleG.write_log(SW_LOG_DEBUG, sw_error, _sw_errror_len);\
+    if (SW_LOG_DEBUG >= SwooleG.log_level) { \
+        size_t _sw_error_len = sw_snprintf(sw_error, SW_ERROR_MSG_SIZE, "%s(:%d): " str, __func__, __LINE__, ##__VA_ARGS__); \
+        SwooleG.write_log(SW_LOG_DEBUG, sw_error, _sw_error_len); \
     }
 
 #define swHexDump(data, length) \
@@ -569,8 +593,8 @@ enum swTrace_type
 #ifdef SW_LOG_TRACE_OPEN
 #define swTraceLog(what,str,...) \
     if (SW_LOG_TRACE >= SwooleG.log_level && (what & SwooleG.trace_flags)) {\
-        size_t _sw_errror_len = sw_snprintf(sw_error,SW_ERROR_MSG_SIZE,"%s(:%d): " str, __func__, __LINE__, ##__VA_ARGS__);\
-        SwooleG.write_log(SW_LOG_TRACE, sw_error, _sw_errror_len);\
+        size_t _sw_error_len = sw_snprintf(sw_error,SW_ERROR_MSG_SIZE,"%s(:%d): " str, __func__, __LINE__, ##__VA_ARGS__);\
+        SwooleG.write_log(SW_LOG_TRACE, sw_error, _sw_error_len);\
     }
 #else
 #define swTraceLog(what,str,...)
@@ -636,58 +660,103 @@ typedef struct
     socklen_t len;
 } swSocketAddress;
 
+typedef struct _swSocket
+{
+    int fd;
+    enum swFd_type fdtype;
+    enum swSocket_type socket_type;
+    int events;
+
+    uint8_t removed :1;
+    uint8_t nonblock :1;
+    uint8_t cloexec :1;
+    uint8_t direct_send :1;
+#ifdef SW_USE_OPENSSL
+    uint8_t ssl_send :1;
+    uint8_t ssl_want_read :1;
+    uint8_t ssl_want_write :1;
+    uint8_t ssl_renegotiation :1;
+    uint8_t ssl_handshake_buffer_set :1;
+#endif
+    uint8_t dontwait :1;
+    uint8_t close_wait :1;
+    uint8_t send_wait :1;
+    uint8_t listen_wait :1;
+    uint8_t tcp_nopush :1;
+    uint8_t tcp_nodelay :1;
+    uint8_t skip_recv :1;
+    uint8_t recv_wait :1;
+    uint8_t event_hup :1;
+
+    /**
+     * memory buffer size;
+     */
+    uint32_t buffer_size;
+
+    void *object;
+
+#ifdef SW_USE_OPENSSL
+    SSL *ssl;
+    uint32_t ssl_state;
+#endif
+
+    swSocketAddress info;
+
+    struct _swBuffer *out_buffer;
+    struct _swBuffer *in_buffer;
+    swString *recv_buffer;
+
+#ifdef SW_DEBUG
+    size_t total_recv_bytes;
+    size_t total_send_bytes;
+#endif
+
+} swSocket;
+
+typedef struct _swTask_sendfile
+{
+    char *filename;
+    uint16_t name_len;
+    int fd;
+    size_t length;
+    off_t offset;
+} swTask_sendfile;
+
 typedef struct _swConnection
 {
     /**
      * file descript
      */
     int fd;
-
     /**
      * session id
      */
     uint32_t session_id;
-
     /**
      * socket type, SW_SOCK_TCP or SW_SOCK_UDP
      */
-    uint16_t socket_type;
-
-    /**
-     * fd type, SW_FD_TCP or SW_FD_PIPE
-     */
-    uint16_t fdtype;
-
-    int events;
-
+    enum swSocket_type socket_type;
     //--------------------------------------------------------------
     /**
      * is active
      * system fd must be 0. en: signalfd, listen socket
      */
     uint8_t active;
-    uint8_t connect_notify;
-    uint8_t direct_send;
-    uint8_t ssl_send;
+#ifdef SW_USE_OPENSSL
+    uint8_t ssl;
+    uint8_t ssl_ready;
+#endif
     //--------------------------------------------------------------
-    uint8_t listen_wait;
-    uint8_t recv_wait;
-    uint8_t send_wait;
-    uint8_t close_wait;
     uint8_t overflow;
     uint8_t high_watermark;
-    uint8_t removed;
-    uint8_t tcp_nopush;
-    uint8_t dontwait;
     //--------------------------------------------------------------
-    uint8_t tcp_nodelay;
-    uint8_t ssl_want_read;
-    uint8_t ssl_want_write;
     uint8_t http_upgrade;
 #ifdef SW_USE_HTTP2
     uint8_t http2_stream;
 #endif
-    uint8_t skip_recv;
+#ifdef SW_HAVE_ZLIB
+    uint8_t websocket_compression;
+#endif
     //--------------------------------------------------------------
     /**
      * server is actively close the connection
@@ -697,11 +766,11 @@ typedef struct _swConnection
     uint8_t close_queued;
     uint8_t closing;
     uint8_t close_reset;
+    uint8_t peer_closed;
     /**
      * protected connection, cannot be closed by heartbeat thread.
      */
     uint8_t protect;
-    uint8_t nonblock;
     //--------------------------------------------------------------
     uint8_t close_notify;
     uint8_t close_force;
@@ -710,42 +779,26 @@ typedef struct _swConnection
      * ReactorThread id
      */
     uint16_t reactor_id;
-
     /**
      * close error code
      */
     uint16_t close_errno;
-
     /**
      * from which socket fd
      */
     sw_atomic_t server_fd;
-
     /**
      * socket address
      */
     swSocketAddress info;
-
     /**
      * link any thing, for kernel, do not use with application.
      */
     void *object;
-
     /**
-     * input buffer
+     * socket info
      */
-    struct _swBuffer *in_buffer;
-
-    /**
-     * output buffer
-     */
-    struct _swBuffer *out_buffer;
-
-    /**
-     * for receive data buffer
-     */
-    swString *recv_buffer;
-
+    swSocket *socket;
     /**
      * connect time(seconds)
      */
@@ -762,39 +815,24 @@ typedef struct _swConnection
      */
     double last_time_usec;
 #endif
-
     /**
      * bind uid
      */
     uint32_t uid;
-
-    /**
-     * memory buffer size;
-     */
-    uint32_t buffer_size;
-
     /**
      * upgarde websocket
      */
     uint8_t websocket_status;
-
     /**
      * unfinished data frame
      */
     swString *websocket_buffer;
 
 #ifdef SW_USE_OPENSSL
-    SSL *ssl;
-    uint32_t ssl_state;
-    uint16_t ssl_client_cert_pid;
     swString *ssl_client_cert;
+    uint16_t ssl_client_cert_pid;
 #endif
     sw_atomic_t lock;
-
-#ifdef SW_DEBUG
-    size_t total_recv_bytes;
-    size_t total_send_bytes;
-#endif
 
 } swConnection;
 
@@ -803,7 +841,7 @@ typedef struct _swProtocol
     /* one package: eof check */
     uint8_t split_by_eof;
     uint8_t package_eof_len;
-    char package_eof[SW_DATA_EOF_MAXLEN + 1];
+    char package_eof[SW_DATA_EOF_MAXLEN];
 
     char package_length_type;
     uint8_t package_length_size;
@@ -815,12 +853,12 @@ typedef struct _swProtocol
     void *private_data_2;
     uint16_t real_header_length;
 
-    int (*onPackage)(struct _swProtocol *, swConnection *, char *, uint32_t);
-    ssize_t (*get_package_length)(struct _swProtocol *, swConnection *, char *, uint32_t);
-    uint8_t (*get_package_length_size)(swConnection *);
+    int (*onPackage)(struct _swProtocol *, swSocket *, char *, uint32_t);
+    ssize_t (*get_package_length)(struct _swProtocol *, swSocket *, char *, uint32_t);
+    uint8_t (*get_package_length_size)(swSocket *);
 } swProtocol;
 
-typedef ssize_t (*swProtocol_length_function)(struct _swProtocol *, swConnection *, char *, uint32_t);
+typedef ssize_t (*swProtocol_length_function)(struct _swProtocol *, swSocket *, char *, uint32_t);
 //------------------------------String--------------------------------
 #define swoole_tolower(c)      (uchar) ((c >= 'A' && c <= 'Z') ? (c | 0x20) : c)
 #define swoole_toupper(c)      (uchar) ((c >= 'a' && c <= 'z') ? (c & ~0x20) : c)
@@ -939,17 +977,20 @@ typedef struct _swDataHead
     uint8_t type;
     uint8_t flags;
     uint16_t server_fd;
+    uint16_t ext_info;
 #ifdef SW_BUFFER_RECV_TIME
     double time;
 #endif
 } swDataHead;
 
+void swDataHead_dump(const swDataHead *data);
+
 typedef struct _swEvent
 {
     int fd;
     int16_t reactor_id;
-    uint8_t type;
-    swConnection *socket;
+    enum swFd_type type;
+    swSocket *socket;
 } swEvent;
 
 typedef struct
@@ -966,7 +1007,8 @@ typedef struct
 
 typedef struct _swDgramPacket
 {
-    swSocketAddress info;
+    int socket_type;
+    swSocketAddress socket_addr;
     uint32_t length;
     char data[0];
 } swDgramPacket;
@@ -995,9 +1037,12 @@ typedef struct _swPipe
     int blocking;
     double timeout;
 
+    swSocket *master_socket;
+    swSocket *worker_socket;
+
     int (*read)(struct _swPipe *, void *recv, int length);
     int (*write)(struct _swPipe *, void *send, int length);
-    int (*getFd)(struct _swPipe *, int master);
+    swSocket* (*getSocket)(struct _swPipe *, int master);
     int (*close)(struct _swPipe *);
 } swPipe;
 
@@ -1014,6 +1059,8 @@ int swPipeBase_create(swPipe *p, int blocking);
 int swPipeEventfd_create(swPipe *p, int blocking, int semaphore, int timeout);
 int swPipeUnsock_create(swPipe *p, int blocking, int protocol);
 int swPipeUnsock_close_ext(swPipe *p, int which);
+int swPipe_init_socket(swPipe *p, int master_fd, int worker_fd, int blocking);
+swSocket* swPipe_getSocket(swPipe *p, int master);
 
 static inline int swPipeNotify_auto(swPipe *p, int blocking, int semaphore)
 {
@@ -1269,7 +1316,13 @@ typedef struct _swThreadParam
     int pti;
 } swThreadParam;
 
+
+#ifdef __MACH__
+char* sw_error_();
+#define sw_error     sw_error_()
+#else
 extern __thread char sw_error[SW_ERROR_MSG_SIZE];
+#endif
 
 enum swProcess_type
 {
@@ -1278,6 +1331,23 @@ enum swProcess_type
     SW_PROCESS_MANAGER    = 3,
     SW_PROCESS_TASKWORKER = 4,
     SW_PROCESS_USERWORKER = 5,
+};
+
+enum swIPC_type
+{
+    SW_IPC_NONE     = 0,
+    SW_IPC_UNIXSOCK = 1,
+    SW_IPC_MSGQUEUE = 2,
+    SW_IPC_SOCKET   = 3,
+};
+
+enum swPipe_type
+{
+    SW_PIPE_WORKER     = 0,
+    SW_PIPE_MASTER     = 1,
+    SW_PIPE_READ       = 0,
+    SW_PIPE_WRITE      = 1,
+    SW_PIPE_NONBLOCK   = 2,
 };
 
 #define swIsMaster()          (SwooleG.process_type==SW_PROCESS_MASTER)
@@ -1457,6 +1527,7 @@ swString* swoole_file_get_contents(const char *filename);
 int swoole_file_put_contents(const char *filename, const char *content, size_t length);
 long swoole_file_size(const char *filename);
 char *swoole_dec2hex(int value, int base);
+size_t swoole_hex2dec(char** hex);
 int swoole_version_compare(const char *version1, const char *version2);
 #ifdef HAVE_EXECINFO
 void swoole_print_trace(void);
@@ -1467,7 +1538,7 @@ int swoole_gethostbyname(int type, const char *name, char *addr);
 int swoole_getaddrinfo(swRequest_getaddrinfo *req);
 char* swoole_string_format(size_t n, const char *format, ...);
 //----------------------core function---------------------
-int swSocket_set_timeout(int sock, double timeout);
+int swSocket_set_timeout(swSocket *sock, double timeout);
 int swSocket_create_server(int type, const char *address, int port, int backlog);
 //----------------------------------------Socket---------------------------------------
 static sw_inline int swSocket_is_dgram(uint8_t type)
@@ -1488,6 +1559,9 @@ void swoole_rtrim(char *str, int len);
 void swoole_redirect_stdout(int new_fd);
 int swoole_shell_exec(const char *command, pid_t *pid, uint8_t get_error_stream);
 int swoole_daemon(int nochdir, int noclose);
+
+SW_API const char* swoole_version(void);
+SW_API int swoole_version_id(void);
 
 SW_API int swoole_add_function(const char *name, void* func);
 SW_API void* swoole_get_function(const char *name, uint32_t length);
@@ -1516,44 +1590,66 @@ static sw_inline uint64_t swoole_ntoh64(uint64_t net)
     uint32_t high, low;
 
     low = net & 0xFFFFFFFF;
-    high = (net >> 32) & 0xFFFFFFFF;
+    high = net >> 32;
     low = ntohl(low);
     high = ntohl(high);
+
     ret = low;
     ret <<= 32;
     ret |= high;
     return ret;
 }
 
+swSocket* swSocket_new(int fd, enum swFd_type type);
+void swSocket_free(swSocket *sock);
 int swSocket_create(int type);
 int swSocket_bind(int sock, int type, const char *host, int *port);
-int swSocket_accept(int fd, swSocketAddress *sa);
+swSocket* swSocket_accept(swSocket *sock, swSocketAddress *sa);
 int swSocket_wait(int fd, int timeout_ms, int events);
 int swSocket_wait_multi(int *list_of_fd, int n_fd, int timeout_ms, int events);
 void swSocket_clean(int fd);
 ssize_t swSocket_sendto_blocking(int fd, const void *buf, size_t n, int flag, struct sockaddr *addr, socklen_t addr_len);
-int swSocket_set_buffer_size(int fd, uint32_t buffer_size);
+int swSocket_set_buffer_size(swSocket *sock, uint32_t buffer_size);
 ssize_t swSocket_udp_sendto(int server_sock, const char *dst_ip, int dst_port, const char *data, uint32_t len);
 ssize_t swSocket_udp_sendto6(int server_sock, const char *dst_ip, int dst_port, const char *data, uint32_t len);
 ssize_t swSocket_unix_sendto(int server_sock, const char *dst_path, const char *data, uint32_t len);
 int swSocket_sendfile_sync(int sock, const char *filename, off_t offset, size_t length, double timeout);
-int swSocket_write_blocking(int __fd, const void *__data, int __len);
-int swSocket_recv_blocking(int fd, void *__data, size_t __len, int flags);
+ssize_t swSocket_write_blocking(int __fd, const void *__data, size_t __len);
+ssize_t swSocket_recv_blocking(int fd, void *__data, size_t __len, int flags);
 
-static sw_inline int swSocket_set_nonblock(int sock)
+static sw_inline int swSocket_set_nonblock(swSocket *sock)
 {
-    return swoole_fcntl_set_option(sock, 1, -1);
+    if (swoole_fcntl_set_option(sock->fd, 1, -1) < 0)
+    {
+        return SW_ERR;
+    }
+    else
+    {
+        sock->nonblock = 1;
+        return SW_OK;
+    }
 }
 
-static sw_inline int swSocket_set_blocking(int sock)
+static sw_inline int swSocket_set_block(swSocket *sock)
 {
-    return swoole_fcntl_set_option(sock, 0, -1);
+    if (swoole_fcntl_set_option(sock->fd, 0, -1) < 0)
+    {
+        return SW_ERR;
+    }
+    else
+    {
+        sock->nonblock = 0;
+        return SW_OK;
+    }
 }
 
 static sw_inline int swoole_waitpid(pid_t __pid, int *__stat_loc, int __options)
 {
     int ret;
-    do { ret = waitpid(__pid, __stat_loc, __options); } while (ret < 0 && errno == EINTR);
+    do
+    {
+        ret = waitpid(__pid, __stat_loc, __options);
+    } while (ret < 0 && errno == EINTR);
     return ret;
 }
 
@@ -1615,19 +1711,10 @@ struct _swReactor
     uint32_t start :1;
     uint32_t once :1;
     uint32_t wait_exit :1;
-
     /**
-     * disable accept new connection
+     * callback signal
      */
-    uint32_t disable_accept :1;
-
     uint32_t check_signalfd :1;
-
-    /**
-     * multi-thread reactor, cannot realloc sockets.
-     */
-    uint32_t thread :1;
-
     /**
      * reactor->wait timeout (millisecond) or -1
      */
@@ -1642,24 +1729,19 @@ struct _swReactor
     time_t last_malloc_trim_time;
 #endif
 
-    /**
-     * for thread
-     */
-    swConnection *socket_list;
+    swReactor_handler read_handler[SW_MAX_FDTYPE];
+    swReactor_handler write_handler[SW_MAX_FDTYPE];
+    swReactor_handler error_handler[SW_MAX_FDTYPE];
 
-    /**
-     * for process
-     */
-    swArray *socket_array;
+    swReactor_handler default_write_handler;
+    swReactor_handler default_error_handler;
 
-    swReactor_handler handler[SW_MAX_FDTYPE];        // default event
-    swReactor_handler write_handler[SW_MAX_FDTYPE];  // ext event 1 (maybe writable event)
-    swReactor_handler error_handler[SW_MAX_FDTYPE];  // ext event 2 (error event, maybe socket closed)
+    struct _swTimer *timer;
 
-    int (*add)(swReactor *, int fd, int fdtype);
-    int (*set)(swReactor *, int fd, int fdtype);
-    int (*del)(swReactor *, int fd);
-    int (*wait)(swReactor *, struct timeval *);
+    int (*add)(swReactor *reactor, swSocket *socket, int events);
+    int (*set)(swReactor *reactor, swSocket *socket, int events);
+    int (*del)(swReactor *reactor, swSocket *socket);
+    int (*wait)(swReactor *reactor, struct timeval *);
     void (*free)(swReactor *);
 
     void *defer_tasks;
@@ -1668,17 +1750,16 @@ struct _swReactor
     swDefer_callback idle_task;
     swDefer_callback future_task;
 
-    void (*onTimeout)(swReactor *);
-    void (*onFinish)(swReactor *);
-    void (*onBegin)(swReactor *);
+    void (*onTimeout)(swReactor *reactor);
+    void (*onFinish)(swReactor *reactor);
+    void (*onBegin)(swReactor *reactor);
 
-    void (*enable_accept)(swReactor *);
-    int (*can_exit)(swReactor *);
-    int (*is_empty)(swReactor *);
+    int (*is_empty)(swReactor *reactor);
+    int (*can_exit)(swReactor *reactor);
 
-    int (*write)(swReactor *, int, const void *, int);
-    int (*close)(swReactor *, int);
-    void (*defer)(swReactor *, swCallback, void *);
+    int (*write)(swReactor *reactor, swSocket *socket, const void *buf, int n);
+    int (*close)(swReactor *reactor, swSocket *socket);
+    void (*defer)(swReactor *reactor, swCallback callback, void *data);
 };
 
 typedef struct _swWorker swWorker;
@@ -1726,16 +1807,12 @@ struct _swWorker
     uint8_t ipc_mode;
     uint8_t child_process;
 
-    uint8_t traced;
-    void (*tracer)(struct _swWorker *);
-
     /**
      * tasking num
      */
     sw_atomic_t tasking_num;
 
     time_t start_time;
-    time_t request_time;
 
     long dispatch_count;
     long request_count;
@@ -1747,14 +1824,12 @@ struct _swWorker
 
     swLock lock;
 
-    void *send_shm;
-
     swPipe *pipe_object;
 
-    int pipe_master;
-    int pipe_worker;
+    swSocket *pipe_master;
+    swSocket *pipe_worker;
+    swSocket *pipe_current;
 
-    int pipe;
     void *ptr;
     void *ptr2;
 };
@@ -1810,8 +1885,9 @@ struct _swProcessPool
     key_t msgqueue_key;
 
 
-    int worker_num;
-    int max_request;
+    uint32_t worker_num;
+    uint32_t max_request;
+    uint32_t max_request_grace;
 
     int (*onTask)(struct _swProcessPool *pool, swEventData *task);
 
@@ -1861,27 +1937,27 @@ static sw_inline int swReactor_event_error(int fdtype)
     return fdtype & SW_EVENT_ERROR;
 }
 
-static sw_inline int swReactor_fdtype(int fdtype)
+static sw_inline enum swFd_type swReactor_fdtype(int flags)
 {
-    return fdtype & (~SW_EVENT_READ) & (~SW_EVENT_WRITE) & (~SW_EVENT_ERROR) & (~SW_EVENT_ONCE);
+    return (enum swFd_type) (flags & (~SW_EVENT_READ) & (~SW_EVENT_WRITE) & (~SW_EVENT_ERROR) & (~SW_EVENT_ONCE));
 }
 
-static sw_inline int swReactor_events(int fdtype)
+static sw_inline int swReactor_events(int flags)
 {
     int events = 0;
-    if (swReactor_event_read(fdtype))
+    if (swReactor_event_read(flags))
     {
         events |= SW_EVENT_READ;
     }
-    if (swReactor_event_write(fdtype))
+    if (swReactor_event_write(flags))
     {
         events |= SW_EVENT_WRITE;
     }
-    if (swReactor_event_error(fdtype))
+    if (swReactor_event_error(flags))
     {
         events |= SW_EVENT_ERROR;
     }
-    if (fdtype & SW_EVENT_ONCE)
+    if (flags & SW_EVENT_ONCE)
     {
         events |= SW_EVENT_ONCE;
     }
@@ -1889,7 +1965,7 @@ static sw_inline int swReactor_events(int fdtype)
 }
 
 int swReactor_create(swReactor *reactor, int max_event);
-void swReactor_destory(swReactor *reactor);
+void swReactor_destroy(swReactor *reactor);
 void swReactor_add_destroy_callback(swReactor *reactor, swCallback cb, void *data);
 
 static inline void swReactor_before_wait(swReactor *reactor)
@@ -1902,46 +1978,33 @@ static inline void swReactor_before_wait(swReactor *reactor)
 
 int swReactor_empty(swReactor *reactor);
 
-static sw_inline swConnection* swReactor_get(swReactor *reactor, int fd)
+static sw_inline int swReactor_isset_handler(swReactor *reactor, int fdtype)
 {
-    swConnection *socket = reactor->thread ? &reactor->socket_list[fd] : (swConnection*) swArray_alloc(reactor->socket_array, fd);
-    if (socket && !socket->active)
-    {
-        socket->fd = fd;
-    }
-    return socket;
+    return reactor->read_handler[fdtype] != NULL;
 }
 
-static sw_inline int swReactor_isset_handler(swReactor *reactor, int _fdtype)
+static sw_inline void swReactor_add(swReactor *reactor, swSocket *_socket, int events)
 {
-    return reactor->handler[_fdtype] != NULL;
+    _socket->events = events;
+    _socket->removed = 0;
+    reactor->event_num++;
 }
 
-static sw_inline void swReactor_add(swReactor *reactor, int fd, int type)
+static sw_inline void swReactor_set(swReactor *reactor, swSocket *_socket, int events)
 {
-    swConnection *socket = swReactor_get(reactor, fd);
-    socket->fdtype = swReactor_fdtype(type);
-    socket->events = swReactor_events(type);
-    socket->removed = 0;
+    _socket->events = events;
 }
 
-static sw_inline void swReactor_set(swReactor *reactor, int fd, int type)
+static sw_inline void swReactor_del(swReactor *reactor, swSocket *_socket)
 {
-    swConnection *socket = swReactor_get(reactor, fd);
-    socket->events = swReactor_events(type);
+    _socket->events = 0;
+    _socket->removed = 1;
+    reactor->event_num--;
 }
 
-static sw_inline void swReactor_del(swReactor *reactor, int fd)
+static sw_inline int swReactor_exists(swReactor *reactor, swSocket *_socket)
 {
-    swConnection *socket = swReactor_get(reactor, fd);
-    socket->events = 0;
-    socket->removed = 1;
-}
-
-static sw_inline int swReactor_exists(swReactor *reactor, int fd)
-{
-    swConnection *socket = swReactor_get(reactor, fd);
-    return !socket->removed && socket->events;
+    return !_socket->removed && _socket->events;
 }
 
 static sw_inline int swReactor_get_timeout_msec(swReactor *reactor)
@@ -1950,77 +2013,103 @@ static sw_inline int swReactor_get_timeout_msec(swReactor *reactor)
 }
 
 int swReactor_onWrite(swReactor *reactor, swEvent *ev);
-int swReactor_close(swReactor *reactor, int fd);
-int swReactor_write(swReactor *reactor, int fd, const void *buf, int n);
-int swReactor_wait_write_buffer(swReactor *reactor, int fd);
+int swReactor_close(swReactor *reactor, swSocket *socket);
+int swReactor_write(swReactor *reactor, swSocket *socket, const void *buf, int n);
+int swReactor_wait_write_buffer(swReactor *reactor, swSocket *socket);
 void swReactor_activate_future_task(swReactor *reactor);
 
-static sw_inline int swReactor_add_event(swReactor *reactor, int fd, enum swEvent_type event_type)
+static sw_inline int swReactor_add_event(swReactor *reactor, swSocket *_socket, enum swEvent_type event_type)
 {
-    swConnection *conn = swReactor_get(reactor, fd);
-    if (!(conn->events & event_type))
+    if (!(_socket->events & event_type))
     {
-        return reactor->set(reactor, fd, conn->fdtype | conn->events | event_type);
+        return reactor->set(reactor, _socket, _socket->events | event_type);
     }
     return SW_OK;
 }
 
-static sw_inline int swReactor_del_event(swReactor *reactor, int fd, enum swEvent_type event_type)
+static sw_inline int swReactor_del_event(swReactor *reactor, swSocket *_socket, enum swEvent_type event_type)
 {
-    swConnection *conn = swReactor_get(reactor, fd);
-    if (conn->events & event_type)
+    if (_socket->events & event_type)
     {
-        return reactor->set(reactor, fd, conn->fdtype | (conn->events & (~event_type)));
+        return reactor->set(reactor, _socket, _socket->events & (~event_type));
     }
     return SW_OK;
 }
 
-static sw_inline int swReactor_remove_read_event(swReactor *reactor, int fd)
+static sw_inline int swReactor_remove_read_event(swReactor *reactor, swSocket *_socket)
 {
-    swConnection *conn = swReactor_get(reactor, fd);
-    if (conn->events & SW_EVENT_WRITE)
+    if (_socket->events & SW_EVENT_WRITE)
     {
-        conn->events &= (~SW_EVENT_READ);
-        return reactor->set(reactor, fd, conn->fdtype | conn->events);
+        _socket->events &= (~SW_EVENT_READ);
+        return reactor->set(reactor, _socket, _socket->events);
     }
     else
     {
-        return reactor->del(reactor, fd);
+        return reactor->del(reactor, _socket);
     }
 }
 
-static sw_inline int swReactor_remove_write_event(swReactor *reactor, int fd)
+static sw_inline int swReactor_remove_write_event(swReactor *reactor, swSocket *_socket)
 {
-    swConnection *conn = swReactor_get(reactor, fd);
-    if (conn->events & SW_EVENT_READ)
+    if (_socket->events & SW_EVENT_READ)
     {
-        conn->events &= (~SW_EVENT_WRITE);
-        return reactor->set(reactor, fd, conn->fdtype | conn->events);
+        _socket->events &= (~SW_EVENT_WRITE);
+        return reactor->set(reactor, _socket, _socket->events);
     }
     else
     {
-        return reactor->del(reactor, fd);
+        return reactor->del(reactor, _socket);
     }
 }
 
-static sw_inline swReactor_handler swReactor_get_handler(swReactor *reactor, int event_type, int fdtype)
+static sw_inline int swReactor_add_read_event(swReactor *reactor, swSocket *_socket)
 {
-    if (event_type == SW_EVENT_WRITE)
+    if (_socket->events & SW_EVENT_WRITE)
     {
-        return (reactor->write_handler[fdtype] != NULL) ? reactor->write_handler[fdtype] : reactor->handler[SW_FD_WRITE];
+        _socket->events |= SW_EVENT_READ;
+        return reactor->set(reactor, _socket, _socket->events);
     }
-    else if (event_type == SW_EVENT_ERROR)
+    else
     {
-        return (reactor->error_handler[fdtype] != NULL) ? reactor->error_handler[fdtype] : reactor->handler[SW_FD_CLOSE];
+        return reactor->add(reactor, _socket, SW_EVENT_READ);
     }
-    return reactor->handler[fdtype];
 }
 
-int swReactor_set_handler(swReactor *, int, swReactor_handler);
+static sw_inline int swReactor_add_write_event(swReactor *reactor, swSocket *_socket)
+{
+    if (_socket->events & SW_EVENT_READ)
+    {
+        _socket->events |= SW_EVENT_WRITE;
+        return reactor->set(reactor, _socket, _socket->events);
+    }
+    else
+    {
+        return reactor->add(reactor, _socket, SW_EVENT_WRITE);;
+    }
+}
+
+static sw_inline swReactor_handler swReactor_get_handler(swReactor *reactor, enum swEvent_type event_type, enum swFd_type fdtype)
+{
+    switch(event_type)
+    {
+    case SW_EVENT_READ:
+        return reactor->read_handler[fdtype];
+    case SW_EVENT_WRITE:
+        return (reactor->write_handler[fdtype] != NULL) ? reactor->write_handler[fdtype] : reactor->default_write_handler;
+    case SW_EVENT_ERROR:
+        return (reactor->error_handler[fdtype] != NULL) ? reactor->error_handler[fdtype] : reactor->default_error_handler;
+    default:
+        abort();
+        break;
+    }
+    return NULL;
+}
+
+int swReactor_set_handler(swReactor *reactor, int fdtype, swReactor_handler);
 
 static sw_inline int swReactor_trigger_close_event(swReactor *reactor, swEvent *event)
 {
-    return swReactor_get_handler(reactor, 0, SW_FD_CLOSE)(reactor, event);
+    return reactor->default_error_handler(reactor, event);
 }
 
 int swReactorEpoll_create(swReactor *reactor, int max_event_num);
@@ -2029,10 +2118,11 @@ int swReactorKqueue_create(swReactor *reactor, int max_event_num);
 int swReactorSelect_create(swReactor *reactor);
 
 /*----------------------------Process Pool-------------------------------*/
-int swProcessPool_create(swProcessPool *pool, int worker_num, int max_request, key_t msgqueue_key, int ipc_mode);
+int swProcessPool_create(swProcessPool *pool, uint32_t worker_num, key_t msgqueue_key, int ipc_mode);
 int swProcessPool_create_unix_socket(swProcessPool *pool, char *socket_file, int blacklog);
 int swProcessPool_create_tcp_socket(swProcessPool *pool, char *host, int port, int blacklog);
 int swProcessPool_set_protocol(swProcessPool *pool, int task_protocol, uint32_t max_packet_size);
+void swProcessPool_set_max_request(swProcessPool *pool, uint32_t max_request, uint32_t max_request_grace);
 int swProcessPool_wait(swProcessPool *pool);
 int swProcessPool_start(swProcessPool *pool);
 void swProcessPool_shutdown(swProcessPool *pool);
@@ -2046,7 +2136,7 @@ int swProcessPool_get_max_request(swProcessPool *pool);
 
 static sw_inline void swProcessPool_set_start_id(swProcessPool *pool, int start_id)
 {
-    int i;
+    uint32_t i;
     pool->start_id = start_id;
     for (i = 0; i < pool->worker_num; i++)
     {
@@ -2056,7 +2146,7 @@ static sw_inline void swProcessPool_set_start_id(swProcessPool *pool, int start_
 
 static sw_inline void swProcessPool_set_type(swProcessPool *pool, int type)
 {
-    int i;
+    uint32_t i;
     pool->type = type;
     for (i = 0; i < pool->worker_num; i++)
     {
@@ -2173,9 +2263,9 @@ int swThreadPool_run(swThreadPool *pool);
 int swThreadPool_free(swThreadPool *pool);
 
 //--------------------------------protocol------------------------------
-ssize_t swProtocol_get_package_length(swProtocol *protocol, swConnection *conn, char *data, uint32_t size);
-int swProtocol_recv_check_length(swProtocol *protocol, swConnection *conn, swString *buffer);
-int swProtocol_recv_check_eof(swProtocol *protocol, swConnection *conn, swString *buffer);
+ssize_t swProtocol_get_package_length(swProtocol *protocol, swSocket *conn, char *data, uint32_t size);
+int swProtocol_recv_check_length(swProtocol *protocol, swSocket *conn, swString *buffer);
+int swProtocol_recv_check_eof(swProtocol *protocol, swSocket *conn, swString *buffer);
 
 //--------------------------------timer------------------------------
 #define SW_TIMER_MIN_MS  1
@@ -2215,7 +2305,6 @@ struct _swTimer_node
 struct _swTimer
 {
     /*--------------signal timer--------------*/
-    uint8_t initialized;
     swReactor *reactor;
     swHeap *heap;
     swHashMap *map;
@@ -2233,6 +2322,8 @@ struct _swTimer
     void (*close)(swTimer *timer);
 };
 
+int swTimer_init(swTimer *timer, long msec);
+void swTimer_reinit(swTimer *timer, swReactor *reactor);
 swTimer_node* swTimer_add(swTimer *timer, long _msec, int interval, void *data, swTimerCallback callback);
 enum swBool_type swTimer_del(swTimer *timer, swTimer_node *node);
 void swTimer_free(swTimer *timer);
@@ -2263,6 +2354,11 @@ typedef struct
     uint8_t run_always;
 
     /**
+     * for timer with block io
+     */
+    uint8_t signal_alarm;
+
+    /**
      * Current Proccess Worker's id
      */
     uint32_t id;
@@ -2274,7 +2370,7 @@ typedef struct
 
     uint32_t shutdown :1;
 
-    int max_request;
+    uint32_t max_request;
 
     swString **buffer_input;
     swString **buffer_output;
@@ -2290,6 +2386,16 @@ typedef struct
     uint8_t update_time;
     swString *buffer_stack;
     swReactor *reactor;
+    swTimer *timer;
+    uint8_t aio_init;
+    uint8_t aio_schedule;
+    uint32_t aio_task_num;
+    swPipe aio_pipe;
+    swSocket *aio_read_socket;
+    swSocket *aio_write_socket;
+#ifdef SW_AIO_WRITE_LOCK
+    swLock aio_lock;
+#endif
 } swThreadGlobal_t;
 
 typedef struct
@@ -2301,13 +2407,9 @@ typedef struct
     } address;
 } swDNS_server;
 
-typedef struct _swServer swServer;
-typedef struct _swFactory swFactory;
-
 typedef struct
 {
-    swTimer timer;
-
+    uint8_t init :1;
     uint8_t running :1;
     uint8_t enable_coroutine :1;
     uint8_t use_signalfd :1;
@@ -2321,7 +2423,6 @@ typedef struct
     int process_type;
     pid_t pid;
 
-    int signal_alarm;  //for timer with message queue
     int signal_fd;
     int log_fd;
     int null_fd;
@@ -2340,22 +2441,23 @@ typedef struct
     void (*write_log)(int level, char *content, size_t len);
     void (*fatal_error)(int code, const char *str, ...);
 
+    //-----------------------[System]--------------------------
     uint16_t cpu_num;
-
     uint32_t pagesize;
-    uint32_t max_sockets;
-
     struct utsname uname;
 
+    //-----------------------[Socket]--------------------------
+    uint32_t max_sockets;
     /**
      * tcp socket default buffer size
      */
     uint32_t socket_buffer_size;
+    double socket_send_timeout;
 
-    swServer *serv;
+    void *serv;
 
     swMemoryPool *memory_pool;
-    swReactor *main_reactor;
+    swLock lock;
 
     char *task_tmpdir;
     uint16_t task_tmpdir_len;
@@ -2364,9 +2466,19 @@ typedef struct
     char *dns_server_v6;
     double dns_cache_refresh_time;
 
+    /**
+     * aio-threads
+     */
+    uint32_t aio_core_worker_num;
+    uint32_t aio_worker_num;
+    double aio_max_wait_time;
+    double aio_max_idle_time;
+    swSocket *aio_default_socket;
+
     swHashMap *functions;
     swLinkedList *hooks[SW_MAX_HOOK_TYPE];
 
+    int (*reactor_can_exit)(swReactor *);
 } swGlobal_t;
 
 extern swGlobal_t SwooleG;              //Local Global Variable
@@ -2415,12 +2527,16 @@ static sw_inline void sw_spinlock(sw_atomic_t *lock)
 static sw_inline int64_t swTimer_get_relative_msec()
 {
     struct timeval now;
+    if (!SwooleTG.timer)
+    {
+        return SW_ERR;
+    }
     if (swTimer_now(&now) < 0)
     {
         return SW_ERR;
     }
-    int64_t msec1 = (now.tv_sec - SwooleG.timer.basetime.tv_sec) * 1000;
-    int64_t msec2 = (now.tv_usec - SwooleG.timer.basetime.tv_usec) / 1000;
+    int64_t msec1 = (now.tv_sec - SwooleTG.timer->basetime.tv_sec) * 1000;
+    int64_t msec2 = (now.tv_usec - SwooleTG.timer->basetime.tv_usec) / 1000;
     return msec1 + msec2;
 }
 

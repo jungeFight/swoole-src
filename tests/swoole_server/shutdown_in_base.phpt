@@ -5,7 +5,7 @@ swoole_server: shutdown in base mode
 --FILE--
 <?php
 require __DIR__ . '/../include/bootstrap.php';
-$pm = new ProcessManager;
+$pm = new SwooleTest\ProcessManager;
 $pm->initRandomData(1);
 $pm->parentFunc = function () use ($pm) {
     go(function () use ($pm) {
@@ -22,7 +22,7 @@ $pm->childFunc = function () use ($pm) {
         $pm->wakeup();
     });
     $server->on('receive', function (Swoole\Server $server, int $fd, int $rid, string $data) use ($pm) {
-        Assert::eq($data, $pm->getRandomData());
+        Assert::same($data, $pm->getRandomData());
         $server->shutdown();
     });
     $server->on('shutdown', function () {

@@ -1,13 +1,15 @@
 --TEST--
 swoole_http_client_coro: upgrade bug
 --SKIPIF--
-<?php require __DIR__ . '/../include/skipif.inc'; ?>
+<?php require __DIR__ . '/../include/skipif.inc';
+skip_if_offline();
+?>
 --FILE--
 <?php
 require __DIR__ . '/../include/bootstrap.php';
 go(function () {
     $host = 'www.imiphp.com';
-    $cli = new Swoole\Coroutine\Http\Client($host, 80);
+    $cli = new Swoole\Coroutine\Http\Client($host, 443, true);
     $cli->set(['timeout' => 10]);
     $cli->setHeaders([
         'host' => $host, // wrong case auto fix

@@ -7,8 +7,8 @@ swoole_coroutine_system: readFile
 require __DIR__ . '/../include/bootstrap.php';
 
 go(function () {
-    $content = Co::readFile(TEST_IMAGE);
-    Assert::eq(md5_file(TEST_IMAGE), md5($content));
+    $content = Swoole\Coroutine\System::readFile(TEST_IMAGE);
+    Assert::same(md5_file(TEST_IMAGE), md5($content));
 });
 ?>
 --EXPECT--

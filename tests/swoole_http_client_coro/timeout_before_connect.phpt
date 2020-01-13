@@ -4,6 +4,7 @@ swoole_http_client_coro: use timeout and timeout before connect
 <?php
 require __DIR__ . '/../include/skipif.inc';
 skip_if_in_travis('foreign network dns error');
+skip_if_offline();
 ?>
 --FILE--
 <?php
@@ -21,8 +22,8 @@ go(function () {
     $cli1->setDefer(true);
     Assert::false($cli1->get('/'));
     Assert::false($cli1->recv());
-    Assert::eq($cli1->errCode, SOCKET_ETIMEDOUT);
-    Assert::eq($cli1->statusCode, SWOOLE_HTTP_CLIENT_ESTATUS_CONNECT_FAILED);
+    Assert::same($cli1->errCode, SOCKET_ETIMEDOUT);
+    Assert::same($cli1->statusCode, SWOOLE_HTTP_CLIENT_ESTATUS_CONNECT_FAILED);
 
     $cli2 = new Swoole\Coroutine\Http\Client($ip, 443, true);
     $cli2->setHeaders($requestHeaders);
@@ -33,10 +34,10 @@ go(function () {
     Assert::false($cli1->recv());
     Assert::true($cli2->recv());
 
-    Assert::eq($cli1->errCode, SOCKET_ETIMEDOUT);
-    Assert::eq($cli1->statusCode, SWOOLE_HTTP_CLIENT_ESTATUS_CONNECT_FAILED);
+    Assert::same($cli1->errCode, SOCKET_ETIMEDOUT);
+    Assert::same($cli1->statusCode, SWOOLE_HTTP_CLIENT_ESTATUS_CONNECT_FAILED);
 
-    Assert::eq($cli2->errCode, 0);
+    Assert::same($cli2->errCode, 0);
     Assert::assert($cli2->statusCode === 200 && strpos($cli2->body, 'tencent') !== false);
 });
 swoole_event::wait();

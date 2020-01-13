@@ -42,7 +42,7 @@ swTable* swTable_new(uint32_t rows_size, float conflict_proportion)
     }
     else
     {
-        uint32_t i = 10;
+        uint32_t i = 6;
         while ((1U << i) < rows_size)
         {
             i++;
@@ -90,7 +90,7 @@ swTable* swTable_new(uint32_t rows_size, float conflict_proportion)
     return table;
 }
 
-int swTableColumn_add(swTable *table, char *name, int len, int type, int size)
+int swTableColumn_add(swTable *table, const char *name, int len, int type, int size)
 {
     swTableColumn *col = sw_malloc(sizeof(swTableColumn));
     if (!col)
@@ -195,22 +195,11 @@ int swTable_create(swTable *table)
     memory = (char *) memory + table->size * sizeof(swTableRow *);
     memory_size -= table->size * sizeof(swTableRow *);
 
-#if SW_TABLE_USE_SPINLOCK == 0
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
-    pthread_mutexattr_setprotocol(&attr, PTHREAD_PRIO_INHERIT);
-    pthread_mutexattr_setrobust_np(&attr, PTHREAD_MUTEX_ROBUST_NP);
-#endif
-
     int i;
     for (i = 0; i < table->size; i++)
     {
         table->rows[i] = (swTableRow *) ((char *) memory + (row_memory_size * i));
         memset(table->rows[i], 0, sizeof(swTableRow));
-#if SW_TABLE_USE_SPINLOCK == 0
-        pthread_mutex_init(&table->rows[i]->lock, &attr);
-#endif
     }
 
     memory = (char *) memory + row_memory_size * table->size;
@@ -235,7 +224,7 @@ void swTable_free(swTable *table)
     }
 }
 
-static sw_inline swTableRow* swTable_hash(swTable *table, char *key, int keylen)
+static sw_inline swTableRow* swTable_hash(swTable *table, const char *key, int keylen)
 {
 #ifdef SW_TABLE_USE_PHP_HASH
     uint64_t hashv = swoole_hash_php(key, keylen);
@@ -301,7 +290,7 @@ void swTable_iterator_forward(swTable *table)
     table->iterator->row = NULL;
 }
 
-swTableRow* swTableRow_get(swTable *table, char *key, int keylen, swTableRow** rowlock)
+swTableRow* swTableRow_get(swTable *table, const char *key, int keylen, swTableRow** rowlock)
 {
     if (keylen > SW_TABLE_KEY_SIZE)
     {
@@ -336,11 +325,11 @@ swTableRow* swTableRow_get(swTable *table, char *key, int keylen, swTableRow** r
     return row;
 }
 
-swTableRow* swTableRow_set(swTable *table, char *key, int keylen, swTableRow **rowlock)
+swTableRow* swTableRow_set(swTable *table, const char *key, int keylen, swTableRow **rowlock)
 {
-    if (keylen > SW_TABLE_KEY_SIZE)
+    if (keylen >= SW_TABLE_KEY_SIZE)
     {
-        keylen = SW_TABLE_KEY_SIZE;
+        keylen = SW_TABLE_KEY_SIZE - 1;
     }
 
     swTableRow *row = swTable_hash(table, key, keylen);
@@ -403,6 +392,7 @@ swTableRow* swTableRow_set(swTable *table, char *key, int keylen, swTableRow **r
     }
 
     memcpy(row->key, key, keylen);
+    row->key[keylen] = '\0';
     row->active = 1;
     return row;
 }

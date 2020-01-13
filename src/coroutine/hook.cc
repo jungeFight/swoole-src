@@ -14,7 +14,7 @@
   +----------------------------------------------------------------------+
 */
 
-#include "swoole.h"
+#include "swoole_cxx.h"
 #include "coroutine_cxx_api.h"
 
 #include <sys/file.h>
@@ -25,85 +25,102 @@
 #include <dirent.h>
 #include <string>
 #include <iostream>
+#include <unordered_map>
 
 using swoole::Coroutine;
 using swoole::coroutine::Socket;
+using swoole::coroutine::System;
+using std::unordered_map;
 
-extern "C"
+static unordered_map<int, Socket *> socket_map;
+
+static sw_inline bool is_no_coro()
 {
+    return SwooleTG.reactor == nullptr || !Coroutine::get_current();
+}
+
+static sw_inline Socket* get_socket(int sockfd)
+{
+    auto socket_iterator = socket_map.find(sockfd);
+    if (socket_iterator == socket_map.end())
+    {
+        return nullptr;
+    }
+    return socket_iterator->second;
+}
+
+static sw_inline Socket* get_socket_ex(int sockfd)
+{
+    if (sw_unlikely(is_no_coro()))
+    {
+        return nullptr;
+    }
+    return get_socket(sockfd);
+}
+
+Socket* swoole_coroutine_get_socket_object(int sockfd)
+{
+    return get_socket(sockfd);
+}
+
+SW_EXTERN_C_BEGIN
 
 int swoole_coroutine_socket(int domain, int type, int protocol)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    if (sw_unlikely(is_no_coro()))
     {
-        return socket(domain, type, protocol);
+        return ::socket(domain, type, protocol);
     }
     Socket *socket = new Socket(domain, type, protocol);
-    if (sw_unlikely(socket->socket == nullptr))
+    int fd = socket->get_fd();
+    if (sw_unlikely(fd < 0))
     {
         delete socket;
-        return -1;
     }
-    return socket->socket->fd;
+    else
+    {
+        socket_map[fd] = socket;
+    }
+    return fd;
 }
 
 ssize_t swoole_coroutine_send(int sockfd, const void *buf, size_t len, int flags)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    Socket *socket = get_socket_ex(sockfd);
+    if (sw_unlikely(socket == nullptr))
     {
-        _no_coro: return ::send(sockfd, buf, len, flags);
+        return ::send(sockfd, buf, len, flags);
     }
-    swConnection *conn = swReactor_get(SwooleG.main_reactor, sockfd);
-    if (conn == nullptr)
-    {
-        goto _no_coro;
-    }
-    Socket *socket = (Socket *) conn->object;
     return socket->send(buf, len);
 }
 
 ssize_t swoole_coroutine_sendmsg(int sockfd, const struct msghdr *msg, int flags)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    Socket *socket = get_socket_ex(sockfd);
+    if (sw_unlikely(socket == nullptr))
     {
-        _no_coro: return ::sendmsg(sockfd, msg, flags);
+        return ::sendmsg(sockfd, msg, flags);
     }
-    swConnection *conn = swReactor_get(SwooleG.main_reactor, sockfd);
-    if (conn == nullptr)
-    {
-        goto _no_coro;
-    }
-    Socket *socket = (Socket *) conn->object;
     return socket->sendmsg(msg, flags);
 }
 
 ssize_t swoole_coroutine_recvmsg(int sockfd, struct msghdr *msg, int flags)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    Socket *socket = get_socket_ex(sockfd);
+    if (sw_unlikely(socket == nullptr))
     {
-        _no_coro: return ::recvmsg(sockfd, msg, flags);
+        return ::recvmsg(sockfd, msg, flags);
     }
-    swConnection *conn = swReactor_get(SwooleG.main_reactor, sockfd);
-    if (conn == nullptr)
-    {
-        goto _no_coro;
-    }
-    Socket *socket = (Socket *) conn->object;
     return socket->recvmsg(msg, flags);
 }
 
 ssize_t swoole_coroutine_recv(int sockfd, void *buf, size_t len, int flags)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    Socket *socket = get_socket_ex(sockfd);
+    if (sw_unlikely(socket == nullptr))
     {
-        _no_coro: return ::recv(sockfd, buf, len, flags);
+        return ::recv(sockfd, buf, len, flags);
     }
-    swConnection *conn = swReactor_get(SwooleG.main_reactor, sockfd);
-    if (conn == nullptr)
-    {
-        goto _no_coro;
-    }
-    Socket *socket = (Socket *) conn->object;
     if (flags & MSG_PEEK)
     {
         return socket->peek(buf, len);
@@ -114,56 +131,43 @@ ssize_t swoole_coroutine_recv(int sockfd, void *buf, size_t len, int flags)
     }
 }
 
-int swoole_coroutine_close(int fd)
+int swoole_coroutine_close(int sockfd)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    Socket *socket = get_socket(sockfd);
+    if (socket == nullptr)
     {
-        _no_coro: return close(fd);
+        return ::close(sockfd);
     }
-    swConnection *conn = swReactor_get(SwooleG.main_reactor, fd);
-    if (conn == nullptr)
-    {
-        goto _no_coro;
-    }
-    Socket *socket = (Socket *) conn->object;
     if (socket->close())
     {
         delete socket;
-        return 0;
+        socket_map.erase(sockfd);
     }
-    else
-    {
-        return -1;
-    }
+    return 0;
 }
 
 int swoole_coroutine_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    Socket *socket = get_socket_ex(sockfd);
+    if (sw_unlikely(socket == nullptr))
     {
-        _no_coro: return connect(sockfd, addr, addrlen);
+        return ::connect(sockfd, addr, addrlen);
     }
-    swConnection *conn = swReactor_get(SwooleG.main_reactor, sockfd);
-    if (conn == nullptr)
-    {
-        goto _no_coro;
-    }
-    Socket *socket = (Socket *) conn->object;
     return socket->connect(addr, addrlen) ? 0 : -1;
 }
 
+#if 1
 int swoole_coroutine_poll(struct pollfd *fds, nfds_t nfds, int timeout)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current() || nfds != 1 || timeout == 0))
+    Socket *socket;
+    if (sw_unlikely(
+        nfds != 1 ||
+        timeout == 0 ||
+        (socket = get_socket_ex(fds[0].fd)) == nullptr
+    ))
     {
-        _poll: return poll(fds, nfds, timeout);
+        return poll(fds, nfds, timeout);
     }
-    swConnection *conn = swReactor_get(SwooleG.main_reactor, fds[0].fd);
-    if (conn == nullptr)
-    {
-        goto _poll;
-    }
-    Socket *socket = (Socket *) conn->object;
     socket->set_timeout((double) timeout / 1000);
     if (fds[0].events & POLLIN)
     {
@@ -175,6 +179,40 @@ int swoole_coroutine_poll(struct pollfd *fds, nfds_t nfds, int timeout)
     }
     return 1;
 }
+#else
+int swoole_coroutine_poll(struct pollfd *fds, nfds_t nfds, int timeout)
+{
+    if (sw_unlikely(is_no_coro() || nfds != 1 || timeout == 0))
+    {
+        return poll(fds, nfds, timeout);
+    }
+
+    std::unordered_map<int, swoole::socket_poll_fd> _fds;
+    for(int i = 0; i< nfds; i++)
+    {
+        _fds.emplace(std::make_pair(fds[i].fd, swoole::socket_poll_fd(fds[i].events, &fds[i])));
+    }
+
+    if (!System::socket_poll(_fds, (double)timeout / 1000))
+    {
+        return -1;
+    }
+
+    int retval;
+    for (auto &i : _fds)
+    {
+        int revents = i.second.revents;
+        struct pollfd *_fd = (struct pollfd *) i.second.ptr;
+        _fd->revents = revents;
+        if (revents > 0)
+        {
+            retval++;
+        }
+    }
+
+    return retval;
+}
+#endif
 
 static void handler_access(swAio_event *event)
 {
@@ -258,7 +296,7 @@ static void aio_onCompleted(swAio_event *event)
 
 int swoole_coroutine_open(const char *pathname, int flags, mode_t mode)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    if (sw_unlikely(is_no_coro()))
     {
         return open(pathname, flags, mode);
     }
@@ -273,7 +311,7 @@ int swoole_coroutine_open(const char *pathname, int flags, mode_t mode)
     ev.object = Coroutine::get_current();
     ev.req = &ev;
 
-    int ret = swAio_dispatch(&ev);
+    ssize_t ret = swAio_dispatch(&ev);
     if (ret < 0)
     {
         return -1;
@@ -282,23 +320,22 @@ int swoole_coroutine_open(const char *pathname, int flags, mode_t mode)
     return ev.ret;
 }
 
-ssize_t swoole_coroutine_read(int fd, void *buf, size_t count)
+ssize_t swoole_coroutine_read(int sockfd, void *buf, size_t count)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    if (sw_unlikely(is_no_coro()))
     {
-        return read(fd, buf, count);
+        return read(sockfd, buf, count);
     }
 
-    swConnection *conn = swReactor_get(SwooleG.main_reactor, fd);
-    if (conn && conn->fdtype == SW_FD_CORO_SOCKET)
+    Socket *socket = get_socket(sockfd);
+    if (socket && socket->socket->fdtype == SW_FD_CORO_SOCKET)
     {
-        Socket *socket = (Socket *) conn->object;
         return socket->read(buf, count);
     }
 
     swAio_event ev;
     bzero(&ev, sizeof(ev));
-    ev.fd = fd;
+    ev.fd = sockfd;
     ev.buf = buf;
     ev.nbytes = count;
     ev.handler = handler_read;
@@ -306,7 +343,7 @@ ssize_t swoole_coroutine_read(int fd, void *buf, size_t count)
     ev.object = Coroutine::get_current();
     ev.req = &ev;
 
-    int ret = swAio_dispatch(&ev);
+    ssize_t ret = swAio_dispatch(&ev);
     if (ret < 0)
     {
         return -1;
@@ -315,23 +352,22 @@ ssize_t swoole_coroutine_read(int fd, void *buf, size_t count)
     return ev.ret;
 }
 
-ssize_t swoole_coroutine_write(int fd, const void *buf, size_t count)
+ssize_t swoole_coroutine_write(int sockfd, const void *buf, size_t count)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    if (sw_unlikely(is_no_coro()))
     {
-        return write(fd, buf, count);
+        return write(sockfd, buf, count);
     }
 
-    swConnection *conn = swReactor_get(SwooleG.main_reactor, fd);
-    if (conn && conn->fdtype == SW_FD_CORO_SOCKET)
+    Socket *socket = get_socket(sockfd);
+    if (socket && socket->socket->fdtype == SW_FD_CORO_SOCKET)
     {
-        Socket *socket = (Socket *) conn->object;
         return socket->write(buf, count);
     }
 
     swAio_event ev;
     bzero(&ev, sizeof(ev));
-    ev.fd = fd;
+    ev.fd = sockfd;
     ev.buf = (void*) buf;
     ev.nbytes = count;
     ev.handler = handler_write;
@@ -339,7 +375,7 @@ ssize_t swoole_coroutine_write(int fd, const void *buf, size_t count)
     ev.object = Coroutine::get_current();
     ev.req = &ev;
 
-    int ret = swAio_dispatch(&ev);
+    ssize_t ret = swAio_dispatch(&ev);
     if (ret < 0)
     {
         return -1;
@@ -350,7 +386,7 @@ ssize_t swoole_coroutine_write(int fd, const void *buf, size_t count)
 
 off_t swoole_coroutine_lseek(int fd, off_t offset, int whence)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    if (sw_unlikely(is_no_coro()))
     {
         return lseek(fd, offset, whence);
     }
@@ -365,7 +401,7 @@ off_t swoole_coroutine_lseek(int fd, off_t offset, int whence)
     ev.object = Coroutine::get_current();
     ev.req = &ev;
 
-    int ret = swAio_dispatch(&ev);
+    ssize_t ret = swAio_dispatch(&ev);
     if (ret < 0)
     {
         return -1;
@@ -376,7 +412,7 @@ off_t swoole_coroutine_lseek(int fd, off_t offset, int whence)
 
 int swoole_coroutine_fstat(int fd, struct stat *statbuf)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    if (sw_unlikely(is_no_coro()))
     {
         return fstat(fd, statbuf);
     }
@@ -390,7 +426,7 @@ int swoole_coroutine_fstat(int fd, struct stat *statbuf)
     ev.object = Coroutine::get_current();
     ev.req = &ev;
 
-    int ret = swAio_dispatch(&ev);
+    ssize_t ret = swAio_dispatch(&ev);
     if (ret < 0)
     {
         return -1;
@@ -401,7 +437,7 @@ int swoole_coroutine_fstat(int fd, struct stat *statbuf)
 
 int swoole_coroutine_unlink(const char *pathname)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    if (sw_unlikely(is_no_coro()))
     {
         return unlink(pathname);
     }
@@ -414,7 +450,7 @@ int swoole_coroutine_unlink(const char *pathname)
     ev.object = Coroutine::get_current();
     ev.req = &ev;
 
-    int ret = swAio_dispatch(&ev);
+    ssize_t ret = swAio_dispatch(&ev);
     if (ret < 0)
     {
         return -1;
@@ -425,7 +461,7 @@ int swoole_coroutine_unlink(const char *pathname)
 
 int swoole_coroutine_statvfs(const char *path, struct statvfs *buf)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    if (sw_unlikely(is_no_coro()))
     {
         return statvfs(path, buf);
     }
@@ -439,7 +475,7 @@ int swoole_coroutine_statvfs(const char *path, struct statvfs *buf)
     ev.object = Coroutine::get_current();
     ev.req = &ev;
 
-    int ret = swAio_dispatch(&ev);
+    ssize_t ret = swAio_dispatch(&ev);
     if (ret < 0)
     {
         return -1;
@@ -450,7 +486,7 @@ int swoole_coroutine_statvfs(const char *path, struct statvfs *buf)
 
 int swoole_coroutine_mkdir(const char *pathname, mode_t mode)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    if (sw_unlikely(is_no_coro()))
     {
         return mkdir(pathname, mode);
     }
@@ -464,7 +500,7 @@ int swoole_coroutine_mkdir(const char *pathname, mode_t mode)
     ev.object = Coroutine::get_current();
     ev.req = &ev;
 
-    int ret = swAio_dispatch(&ev);
+    ssize_t ret = swAio_dispatch(&ev);
     if (ret < 0)
     {
         return -1;
@@ -475,7 +511,7 @@ int swoole_coroutine_mkdir(const char *pathname, mode_t mode)
 
 int swoole_coroutine_rmdir(const char *pathname)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    if (sw_unlikely(is_no_coro()))
     {
         return rmdir(pathname);
     }
@@ -488,7 +524,7 @@ int swoole_coroutine_rmdir(const char *pathname)
     ev.object = Coroutine::get_current();
     ev.req = &ev;
 
-    int ret = swAio_dispatch(&ev);
+    ssize_t ret = swAio_dispatch(&ev);
     if (ret < 0)
     {
         return -1;
@@ -499,7 +535,7 @@ int swoole_coroutine_rmdir(const char *pathname)
 
 int swoole_coroutine_rename(const char *oldpath, const char *newpath)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    if (sw_unlikely(is_no_coro()))
     {
         return rename(oldpath, newpath);
     }
@@ -513,7 +549,7 @@ int swoole_coroutine_rename(const char *oldpath, const char *newpath)
     ev.object = Coroutine::get_current();
     ev.req = &ev;
 
-    int ret = swAio_dispatch(&ev);
+    ssize_t ret = swAio_dispatch(&ev);
     if (ret < 0)
     {
         return -1;
@@ -524,7 +560,7 @@ int swoole_coroutine_rename(const char *oldpath, const char *newpath)
 
 int swoole_coroutine_access(const char *pathname, int mode)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    if (sw_unlikely(is_no_coro()))
     {
         return access(pathname, mode);
     }
@@ -538,7 +574,7 @@ int swoole_coroutine_access(const char *pathname, int mode)
     ev.object = Coroutine::get_current();
     ev.req = &ev;
 
-    int ret = swAio_dispatch(&ev);
+    ssize_t ret = swAio_dispatch(&ev);
     if (ret < 0)
     {
         return -1;
@@ -549,7 +585,7 @@ int swoole_coroutine_access(const char *pathname, int mode)
 
 int swoole_coroutine_flock(int fd, int operation)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    if (sw_unlikely(is_no_coro()))
     {
         return flock(fd, operation);
     }
@@ -563,7 +599,7 @@ int swoole_coroutine_flock(int fd, int operation)
     ev.object = Coroutine::get_current();
     ev.req = &ev;
 
-    int ret = swAio_dispatch(&ev);
+    ssize_t ret = swAio_dispatch(&ev);
     if (ret < 0)
     {
         return -1;
@@ -589,7 +625,7 @@ static void handler_readdir(swAio_event *event)
 
 DIR *swoole_coroutine_opendir(const char *name)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    if (sw_unlikely(is_no_coro()))
     {
         return opendir(name);
     }
@@ -602,7 +638,7 @@ DIR *swoole_coroutine_opendir(const char *name)
     ev.object = Coroutine::get_current();
     ev.req = &ev;
 
-    int ret = swAio_dispatch(&ev);
+    ssize_t ret = swAio_dispatch(&ev);
     if (ret < 0)
     {
         return nullptr;
@@ -613,7 +649,7 @@ DIR *swoole_coroutine_opendir(const char *name)
 
 struct dirent *swoole_coroutine_readdir(DIR *dirp)
 {
-    if (sw_unlikely(SwooleG.main_reactor == nullptr || !Coroutine::get_current()))
+    if (sw_unlikely(is_no_coro()))
     {
         return readdir(dirp);
     }
@@ -626,7 +662,7 @@ struct dirent *swoole_coroutine_readdir(DIR *dirp)
     ev.object = Coroutine::get_current();
     ev.req = &ev;
 
-    int ret = swAio_dispatch(&ev);
+    ssize_t ret = swAio_dispatch(&ev);
     if (ret < 0)
     {
         return nullptr;
@@ -635,4 +671,55 @@ struct dirent *swoole_coroutine_readdir(DIR *dirp)
     return (struct dirent *) ev.buf;
 }
 #endif
+
+void swoole_coroutine_sleep(int sec)
+{
+    System::sleep((double) sec);
 }
+
+void swoole_coroutine_usleep(int usec)
+{
+    System::sleep((double) usec / 1024 / 1024);
+}
+
+int swoole_coroutine_socket_set_timeout(int sockfd, int which, double timeout)
+{
+    Socket *socket = get_socket_ex(sockfd);
+    if (sw_unlikely(socket == nullptr))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+    if (which == SO_RCVTIMEO)
+    {
+        socket->set_timeout(timeout, swoole::SW_TIMEOUT_READ);
+        return 0;
+    }
+    else if (which == SO_SNDTIMEO)
+    {
+        socket->set_timeout(timeout, swoole::SW_TIMEOUT_WRITE);
+        return 0;
+    }
+    else
+    {
+        errno = EINVAL;
+        return -1;
+    }
+}
+
+int swoole_coroutine_socket_wait_event(int sockfd, int event, double timeout)
+{
+    Socket *socket = get_socket_ex(sockfd);
+    if (sw_unlikely(socket == nullptr))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+    double ori_timeout = socket->get_timeout(event == SW_EVENT_READ ? swoole::SW_TIMEOUT_READ : swoole::SW_TIMEOUT_WRITE);
+    socket->set_timeout(timeout);
+    bool retval = socket->poll((enum swEvent_type) event);
+    socket->set_timeout(ori_timeout);
+    return retval ? 0 : -1;
+}
+
+SW_EXTERN_C_END

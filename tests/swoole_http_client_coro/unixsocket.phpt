@@ -7,14 +7,15 @@ require __DIR__ . '/../include/skipif.inc';
 --FILE--
 <?php
 require __DIR__ . '/../include/bootstrap.php';
-$pm = new ProcessManager;
+
+$pm = new SwooleTest\ProcessManager;
 $pm->parentFunc = function () use ($pm) {
     for ($c = MAX_CONCURRENCY; $c--;) {
         go(function () use ($pm) {
             $client = new Swoole\Coroutine\Http\Client('unix:' . str_repeat('/', mt_rand(0, 2)) . UNIXSOCK_PATH);
             for ($n = MAX_REQUESTS; $n--;) {
                 Assert::assert($client->get('/'));
-                Assert::eq($client->body, 'Hello Swoole!');
+                Assert::same($client->body, 'Hello Swoole!');
             }
         });
     }

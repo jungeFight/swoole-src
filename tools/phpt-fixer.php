@@ -1,6 +1,6 @@
 #!/usr/bin/env php
 <?php
-require __DIR__ . '/functions.php';
+require __DIR__ . '/bootstrap.php';
 
 function fix_tests_in_this_dir(string $dir, string $root = '')
 {
@@ -40,6 +40,10 @@ function fix_tests_in_this_dir(string $dir, string $root = '')
                 swoole_ok("Removed white lines in {$file}");
                 $changed = true;
             }
+            // no file
+            if (strpos($content, '--FILE--') === false) {
+                swoole_warn("Can not find --FILE-- in {$file}");
+            }
             // no bootstrap
             if (strpos($content, 'include/bootstrap.php') === false) {
                 swoole_warn("Can not find bootstrap in {$file}");
@@ -65,7 +69,7 @@ function fix_tests_in_this_dir(string $dir, string $root = '')
             $current_title = $matches[1] ?? '';
             if (!$current_title) {
                 swoole_warn("Can not find title in {$file}");
-                continue;
+                goto _finished;
             }
             $current_title_array = explode(':', $current_title);
             $current_title_dir_name = $current_title_array[0];
@@ -92,6 +96,7 @@ function fix_tests_in_this_dir(string $dir, string $root = '')
                 );
                 goto _check_title;
             }
+            _finished:
             if ($changed) {
                 file_put_contents($file, $content);
             }
@@ -101,7 +106,7 @@ function fix_tests_in_this_dir(string $dir, string $root = '')
     }
 }
 
-$root = realpath(__DIR__ . '/../tests');
+$root = realpath(ROOT_DIR . '/tests');
 $dirs = scan_dir($root, function (string $file) {
     return strpos(pathinfo($file, PATHINFO_FILENAME), 'swoole_') === 0;
 });

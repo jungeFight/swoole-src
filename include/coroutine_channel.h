@@ -1,3 +1,19 @@
+/*
+  +----------------------------------------------------------------------+
+  | Swoole                                                               |
+  +----------------------------------------------------------------------+
+  | This source file is subject to version 2.0 of the Apache license,    |
+  | that is bundled with this package in the file LICENSE, and is        |
+  | available through the world-wide-web at the following url:           |
+  | http://www.apache.org/licenses/LICENSE-2.0.html                      |
+  | If you did not receive a copy of the Apache2.0 license and are unable|
+  | to obtain it through the world-wide-web, please send a note to       |
+  | license@swoole.com so we can mail you a copy immediately.            |
+  +----------------------------------------------------------------------+
+  | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
+  +----------------------------------------------------------------------+
+*/
+
 #pragma once
 
 #include "swoole.h"
@@ -41,7 +57,14 @@ public:
 
     ~Channel()
     {
-        SW_ASSERT(producer_queue.empty() && consumer_queue.empty());
+        if (!producer_queue.empty())
+        {
+            swoole_error_log(SW_LOG_WARNING, SW_ERROR_CO_HAS_BEEN_DISCARDED, "channel is destroyed, %zu producers will be discarded", producer_queue.size());
+        }
+        if (!consumer_queue.empty())
+        {
+            swoole_error_log(SW_LOG_WARNING, SW_ERROR_CO_HAS_BEEN_DISCARDED, "channel is destroyed, %zu consumers will be discarded", consumer_queue.size());
+        }
     }
 
     inline bool is_closed()

@@ -1,7 +1,9 @@
 --TEST--
 swoole_http2_client_coro: http2 go away
 --SKIPIF--
-<?php require __DIR__ . '/../include/skipif.inc'; ?>
+<?php require __DIR__ . '/../include/skipif.inc';
+skip_if_offline();
+?>
 --FILE--
 <?php
 require __DIR__ . '/../include/bootstrap.php';
@@ -13,7 +15,7 @@ go(function () {
         'ssl_host_name' => $domain
     ]);
     if (!$cli->connect()) {
-        exit; // we can't connect to this website without proxy in China so we skip it.
+        return; // we can't connect to this website without proxy in China so we skip it.
     }
     $cli->goaway(SWOOLE_HTTP2_ERROR_NO_ERROR, '[GOAWAY] nothing~bye~bye~');
     Assert::assert(!$cli->recv(-1));

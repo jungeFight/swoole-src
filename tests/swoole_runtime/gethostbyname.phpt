@@ -1,7 +1,9 @@
 --TEST--
 swoole_runtime: sleep
 --SKIPIF--
-<?php require __DIR__ . '/../include/skipif.inc'; ?>
+<?php require __DIR__ . '/../include/skipif.inc';
+skip_if_offline();
+?>
 --FILE--
 <?php
 require __DIR__ . '/../include/bootstrap.php';
@@ -10,7 +12,7 @@ $ip1 = gethostbyname($host);
 Swoole\Runtime::enableCoroutine();
 go(function () use($ip1, $host) {
     $ip2 = gethostbyname($host);
-    Assert::eq($ip1, $ip2);
+    Assert::same($ip1, $ip2);
 });
 ?>
 --EXPECTF--

@@ -1,7 +1,9 @@
 --TEST--
 swoole_http_client_coro: reuse defer client
 --SKIPIF--
-<?php require __DIR__ . '/../include/skipif.inc'; ?>
+<?php require __DIR__ . '/../include/skipif.inc';
+skip_if_offline();
+?>
 --FILE--
 <?php
 require __DIR__ . '/../include/bootstrap.php';
@@ -29,9 +31,9 @@ go(function () {
     $qq->get('/');
     $baidu->recv(10);
     $qq->recv(10);
-    Assert::eq($baidu->statusCode, 200);
+    Assert::same($baidu->statusCode, 200);
     Assert::assert(stripos($baidu->body, 'baidu') !== false);
-    Assert::eq($qq->statusCode, 200);
+    Assert::same($qq->statusCode, 200);
     Assert::assert(stripos($qq->body, 'tencent') !== false);
 
     //reuse
@@ -39,9 +41,9 @@ go(function () {
     $qq->get('/contract.shtml');
     $baidu->recv(10);
     $qq->recv(10);
-    Assert::eq($baidu->statusCode, 200);
+    Assert::same($baidu->statusCode, 200);
     Assert::assert(stripos($baidu->body, 'baidu') !== false);
-    Assert::eq($qq->statusCode, 200);
+    Assert::same($qq->statusCode, 200);
     Assert::assert(stripos($qq->body, 'tencent') !== false);
 });
 ?>

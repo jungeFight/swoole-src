@@ -9,34 +9,26 @@ skip_if_in_valgrind();
 <?php
 require __DIR__ . '/../../include/bootstrap.php';
 
+use Swoole\Coroutine\Client;
+use Swoole\Timer;
+use Swoole\Event;
+use Swoole\Server;
+
 $simple_tcp_server = __DIR__ . "/../../include/api/swoole_server/tcp_task_server.php";
 $port = get_one_free_port();
 $closeServer = start_server($simple_tcp_server, TCP_SERVER_HOST, $port);
 
-$cli = new swoole_client(SWOOLE_SOCK_TCP, SWOOLE_SOCK_ASYNC);
-
-$cli->on("connect", function(swoole_client $cli) {
-    Assert::true($cli->isConnected());
+Co\Run(function () use($port, $closeServer) {
+    $cli = new Client(SWOOLE_SOCK_TCP);
+    $r = $cli->connect(TCP_SERVER_HOST, $port);
+    Assert::true($r);
     $cli->send("Test swoole_server::task Interface.");
-});
-
-$cli->on("receive", function(swoole_client $cli, $data){
-    //echo "RECEIVE: $data\n";
-    Assert::eq($data, "OK");
+    $data = $cli->recv();
+    Assert::same($data, "OK");
     $cli->close();
     Assert::false($cli->isConnected());
+    echo "SUCCESS\n";
 });
-
-$cli->on("error", function(swoole_client $cli) {
-    echo "ERROR\n";
-});
-
-$cli->on("close", function(swoole_client $cli) use($closeServer) {
-    echo "SUCCESS";
-    $closeServer();
-});
-
-$cli->connect(TCP_SERVER_HOST, $port);
 ?>
 --EXPECT--
 SUCCESS

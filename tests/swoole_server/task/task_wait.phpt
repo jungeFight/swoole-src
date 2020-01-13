@@ -6,7 +6,7 @@ swoole_server/task: taskwait in coroutine
 <?php
 require __DIR__ . '/../../include/bootstrap.php';
 Swoole\Runtime::enableCoroutine();
-$pm = new ProcessManager;
+$pm = new SwooleTest\ProcessManager;
 
 $randoms = [];
 for ($n = MAX_REQUESTS; $n--;)
@@ -20,7 +20,7 @@ $pm->parentFunc = function ($pid) use ($pm) {
             $c = new Swoole\Coroutine\Http\Client('127.0.0.1', $pm->getFreePort());
             $c->set(['timeout' => 5,]);
             Assert::assert($c->get('/task?n='.$n));
-            Assert::eq($c->body, "OK");
+            Assert::same($c->body, "OK");
         });
     }
     swoole_event_wait();

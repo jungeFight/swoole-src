@@ -4,6 +4,7 @@ swoole_http_client_coro: long domain
 <?php
 require __DIR__ . '/../include/skipif.inc';
 skip_if_in_travis('travis network');
+skip_if_offline();
 ?>
 --FILE--
 <?php
@@ -22,7 +23,7 @@ function http_get(string $url)
         'Accept-Encoding' => 'gzip'
     ]);
     Assert::assert($cli->get('/'));
-    Assert::eq($cli->statusCode, 200);
+    Assert::same($cli->statusCode, 200);
     Assert::assert(!empty($cli->body));
 }
 

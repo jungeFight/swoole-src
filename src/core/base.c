@@ -14,7 +14,7 @@
  +----------------------------------------------------------------------+
  */
 
-#include "swoole.h"
+#include "swoole_api.h"
 #include "atomic.h"
 #include "async.h"
 #include "coroutine_c_api.h"
@@ -32,13 +32,22 @@
 swGlobal_t SwooleG;
 swWorkerGlobal_t SwooleWG;
 __thread swThreadGlobal_t SwooleTG;
+
+#ifdef __MACH__
+static __thread char _sw_error_buf[SW_ERROR_MSG_SIZE];
+char* sw_error_()
+{
+    return _sw_error_buf;
+}
+#else
 __thread char sw_error[SW_ERROR_MSG_SIZE];
+#endif
 
 static void swoole_fatal_error(int code, const char *format, ...);
 
 void swoole_init(void)
 {
-    if (SwooleG.running)
+    if (SwooleG.init)
     {
         return;
     }
@@ -48,13 +57,14 @@ void swoole_init(void)
     bzero(sw_error, SW_ERROR_MSG_SIZE);
 
     SwooleG.running = 1;
+    SwooleG.init = 1;
     SwooleG.enable_coroutine = 1;
 
     SwooleG.log_fd = STDOUT_FILENO;
     SwooleG.write_log = swLog_put;
     SwooleG.fatal_error = swoole_fatal_error;
 
-    SwooleG.cpu_num = sysconf(_SC_NPROCESSORS_ONLN);
+    SwooleG.cpu_num = SW_MAX(1, sysconf(_SC_NPROCESSORS_ONLN));
     SwooleG.pagesize = getpagesize();
     //get system uname
     uname(&SwooleG.uname);
@@ -74,11 +84,17 @@ void swoole_init(void)
     SwooleG.memory_pool = swMemoryGlobal_new(SW_GLOBAL_MEMORY_PAGESIZE, 1);
     if (SwooleG.memory_pool == NULL)
     {
-        printf("[Master] Fatal Error: global memory allocation failure");
+        printf("[Core] Fatal Error: global memory allocation failure");
         exit(1);
     }
 
-    SwooleG.max_sockets = 1024;
+    if (swMutex_create(&SwooleG.lock, 0) < 0)
+    {
+        printf("[Core] mutex init failure");
+        exit(1);
+    }
+
+    SwooleG.max_sockets = SW_MAX_SOCKETS_DEFAULT;
     struct rlimit rlmt;
     if (getrlimit(RLIMIT_NOFILE, &rlmt) < 0)
     {
@@ -86,11 +102,12 @@ void swoole_init(void)
     }
     else
     {
-        SwooleG.max_sockets = MAX((uint32_t) rlmt.rlim_cur, 1024);
+        SwooleG.max_sockets = MAX((uint32_t) rlmt.rlim_cur, SW_MAX_SOCKETS_DEFAULT);
         SwooleG.max_sockets = MIN((uint32_t) rlmt.rlim_cur, SW_SESSION_LIST_SIZE);
     }
 
     SwooleG.socket_buffer_size = SW_SOCKET_BUFFER_SIZE;
+    SwooleG.socket_send_timeout = SW_SOCKET_SEND_TIMEOUT;
 
     SwooleTG.buffer_stack = swString_new(SW_STACK_BUFFER_SIZE);
     if (SwooleTG.buffer_stack == NULL)
@@ -123,26 +140,35 @@ void swoole_init(void)
 #endif
 }
 
+SW_API const char* swoole_version(void)
+{
+    return SWOOLE_VERSION;
+}
+
+SW_API int swoole_version_id(void)
+{
+    return SWOOLE_VERSION_ID;
+}
+
 void swoole_clean(void)
 {
-    //free the global memory
+    if (SwooleG.task_tmpdir)
+    {
+        sw_free(SwooleG.task_tmpdir);
+    }
+    if (SwooleTG.timer)
+    {
+        swoole_timer_free();
+    }
+    if (SwooleTG.reactor)
+    {
+        swoole_event_free();
+    }
     if (SwooleG.memory_pool != NULL)
     {
-        if (SwooleG.timer.initialized)
-        {
-            swTimer_free(&SwooleG.timer);
-        }
-        if (SwooleG.task_tmpdir)
-        {
-            sw_free(SwooleG.task_tmpdir);
-        }
-        if (SwooleG.main_reactor)
-        {
-            SwooleG.main_reactor->free(SwooleG.main_reactor);
-        }
         SwooleG.memory_pool->destroy(SwooleG.memory_pool);
-        bzero(&SwooleG, sizeof(SwooleG));
     }
+    bzero(&SwooleG, sizeof(SwooleG));
 }
 
 pid_t swoole_fork(int flags)
@@ -152,26 +178,32 @@ pid_t swoole_fork(int flags)
         if (swoole_coroutine_is_in())
         {
             swFatalError(SW_ERROR_OPERATION_NOT_SUPPORT, "must be forked outside the coroutine");
-            return -1;
         }
-        if (SwooleAIO.init)
+        if (SwooleTG.aio_init)
         {
-            swError("can not create server after using async file operation");
-            return -1;
+            swFatalError(SW_ERROR_OPERATION_NOT_SUPPORT, "can not create server after using async file operation");
         }
+    }
+    if (flags & SW_FORK_PRECHECK)
+    {
+        return 0;
     }
 
     pid_t pid = fork();
     if (pid == 0)
     {
+        if (flags & SW_FORK_DAEMON)
+        {
+            SwooleG.pid = getpid();
+            return pid;
+        }
         /**
          * [!!!] All timers and event loops must be cleaned up after fork
          */
-        if (SwooleG.timer.initialized)
+        if (SwooleTG.timer)
         {
-            swTimer_free(&SwooleG.timer);
+            swoole_timer_free();
         }
-
         if (!(flags & SW_FORK_EXEC))
         {
             /**
@@ -187,6 +219,14 @@ pid_t swoole_fork(int flags)
              * reopen log file
              */
             swLog_reopen(0);
+            /**
+             * reset eventLoop
+             */
+            if (SwooleTG.reactor)
+            {
+                swoole_event_free();
+                swTraceLog(SW_TRACE_REACTOR, "reactor has been destroyed");
+            }
         }
         else
         {
@@ -194,15 +234,6 @@ pid_t swoole_fork(int flags)
              * close log fd
              */
             swLog_free();
-        }
-        /**
-         * reset eventLoop
-         */
-        if (SwooleG.main_reactor)
-        {
-            SwooleG.main_reactor->free(SwooleG.main_reactor);
-            SwooleG.main_reactor = NULL;
-            swTraceLog(SW_TRACE_REACTOR, "reactor has been destroyed");
         }
         /**
          * reset signal handler
@@ -385,6 +416,33 @@ char* swoole_dec2hex(int value, int base)
     } while (ptr > buf && value);
 
     return sw_strndup(ptr, end - ptr);
+}
+
+size_t swoole_hex2dec(char** hex)
+{
+    size_t value = 0;
+    while (1)
+    {
+        char c = **hex;
+        if ((c >= '0') && (c <= '9'))
+        {
+            value = value * 16 + (c - '0');
+        }
+        else
+        {
+            c = toupper(c);
+            if ((c >= 'A') && (c <= 'Z'))
+            {
+                value = value * 16 + (c - 'A') + 10;
+            }
+            else
+            {
+                break;
+            }
+        }
+        (*hex)++;
+    }
+    return value;
 }
 
 size_t swoole_sync_writefile(int fd, const void *data, size_t len)
@@ -961,7 +1019,7 @@ static int *swoole_kmp_borders(char *needle, size_t nlen)
         return NULL;
     }
 
-    int i, j, *borders = malloc((nlen + 1) * sizeof(*borders));
+    int i, j, *borders = sw_malloc((nlen + 1) * sizeof(*borders));
     if (!borders)
     {
         return NULL;
@@ -1066,7 +1124,7 @@ char *swoole_kmp_strnstr(char *haystack, char *needle, uint32_t length)
         return NULL;
     }
     char *match = swoole_kmp_search(haystack, length, needle, nlen, borders);
-    free(borders);
+    sw_free(borders);
     return match;
 }
 
@@ -1427,4 +1485,17 @@ static void swoole_fatal_error(int code, const char *format, ...)
     va_end(args);
     SwooleG.write_log(SW_LOG_ERROR, sw_error, retval);
     exit(1);
+}
+
+void swDataHead_dump(const swDataHead *data)
+{
+    printf("swDataHead[%p]\n"
+            "{\n"
+            "    int fd = %d;\n"
+            "    uint32_t len = %d;\n"
+            "    int16_t reactor_id = %d;\n"
+            "    uint8_t type = %d;\n"
+            "    uint8_t flags = %d;\n"
+            "    uint16_t server_fd = %d;\n"
+            "}\n", data, data->fd, data->len, data->reactor_id, data->type, data->flags, data->server_fd);
 }
